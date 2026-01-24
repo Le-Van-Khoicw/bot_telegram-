@@ -7,6 +7,7 @@ import string
 import asyncio
 import time
 import urllib.request
+import json 
 from telegram.constants import ChatAction
 from gspread.cell import Cell
 from datetime import datetime, timedelta
@@ -323,23 +324,64 @@ def get_all_user_chat_ids() -> List[int]:
             out.append(int(cid))
     return out
 
+# def init_sheets():
+#     global _gs_client, _gs_sheet, _ws_orders, _ws_products, _ws_pool, _ws_res, _ws_users
+
+#     # giữ nguyên phần check return
+#     if _ws_orders and _ws_products and _ws_pool and _ws_res and _ws_users:
+#         return
+
+#     if not GSHEET_ID:
+#         raise RuntimeError("GSHEET_ID empty (hãy set ENV GSHEET_ID)")
+#     if not os.path.exists(GSVC_JSON):
+#         raise RuntimeError(f"GSVC_JSON not found: {GSVC_JSON}")
+
+#     scopes = [
+#         "https://www.googleapis.com/auth/spreadsheets",
+#         "https://www.googleapis.com/auth/drive",
+#     ]
+#     creds = Credentials.from_service_account_file(GSVC_JSON, scopes=scopes)
+#     _gs_client = gspread.authorize(creds)
+#     _gs_sheet = _gs_client.open_by_key(GSHEET_ID)
+
+#     _ws_orders = _gs_sheet.worksheet(TAB_ORDERS)
+#     _ws_products = _gs_sheet.worksheet(TAB_PRODUCTS)
+#     _ws_pool = _gs_sheet.worksheet(TAB_POOL)
+#     _ws_res = _gs_sheet.worksheet(TAB_RES)
+#     _ws_users = _gs_sheet.worksheet(TAB_USERS)
+
+
+
 def init_sheets():
     global _gs_client, _gs_sheet, _ws_orders, _ws_products, _ws_pool, _ws_res, _ws_users
 
-    # giữ nguyên phần check return
     if _ws_orders and _ws_products and _ws_pool and _ws_res and _ws_users:
         return
 
     if not GSHEET_ID:
         raise RuntimeError("GSHEET_ID empty (hãy set ENV GSHEET_ID)")
-    if not os.path.exists(GSVC_JSON):
-        raise RuntimeError(f"GSVC_JSON not found: {GSVC_JSON}")
 
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = Credentials.from_service_account_file(GSVC_JSON, scopes=scopes)
+
+    # --- ĐOẠN SỬA LẠI ĐÂY NÈ NÍ ---
+    json_content = os.getenv("GOOGLE_JSON_CONTENT")
+
+    if json_content:
+        # Nếu có nội dung trên Render (dạng chữ), ta biến nó thành JSON
+        json_info = json.loads(json_content)
+        creds = Credentials.from_service_account_info(json_info, scopes=scopes)
+        logger.info("✅ Đã nạp GSheet Creds từ Environment Variable")
+    else:
+        # Nếu không có (chạy ở máy nhà), quay lại cách dùng file cũ
+        if not os.path.exists(GSVC_JSON):
+            raise RuntimeError(f"GSVC_JSON not found: {GSVC_JSON}")
+        creds = Credentials.from_service_account_file(GSVC_JSON, scopes=scopes)
+        logger.info("🏠 Đã nạp GSheet Creds từ file JSON cục bộ")
+    # ------------------------------
+
     _gs_client = gspread.authorize(creds)
     _gs_sheet = _gs_client.open_by_key(GSHEET_ID)
 
@@ -348,8 +390,6 @@ def init_sheets():
     _ws_pool = _gs_sheet.worksheet(TAB_POOL)
     _ws_res = _gs_sheet.worksheet(TAB_RES)
     _ws_users = _gs_sheet.worksheet(TAB_USERS)
-
-
 def headers_map(ws) -> Dict[str, int]:
     headers = ws.row_values(1)
     return {str(h).strip().lower(): i for i, h in enumerate(headers, start=1)}
