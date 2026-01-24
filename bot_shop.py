@@ -7,7 +7,7 @@ import string
 import asyncio
 import time
 import urllib.request
-import json 
+import json
 from telegram.constants import ChatAction
 from gspread.cell import Cell
 from datetime import datetime, timedelta
@@ -366,20 +366,27 @@ def init_sheets():
         "https://www.googleapis.com/auth/drive",
     ]
 
-    # --- ĐOẠN SỬA LẠI ĐÂY NÈ NÍ ---
+    # --- SỬA LẠI ĐOẠN NÀY ĐỂ BỎ QUA CHECK FILE VẬT LÝ ---
     json_content = os.getenv("GOOGLE_JSON_CONTENT")
 
     if json_content:
-        # Nếu có nội dung trên Render (dạng chữ), ta biến nó thành JSON
-        json_info = json.loads(json_content)
-        creds = Credentials.from_service_account_info(json_info, scopes=scopes)
-        logger.info("✅ Đã nạp GSheet Creds từ Environment Variable")
+        # Nếu có biến môi trường (Ưu tiên số 1 trên Render)
+        try:
+            json_info = json.loads(json_content)
+            creds = Credentials.from_service_account_info(json_info, scopes=scopes)
+            logger.info("✅ Nạp GSheet Creds từ Environment Variable")
+        except Exception as e:
+            logger.error(f"❌ Lỗi đọc GOOGLE_JSON_CONTENT: {e}")
+            raise
     else:
-        # Nếu không có (chạy ở máy nhà), quay lại cách dùng file cũ
-        if not os.path.exists(GSVC_JSON):
-            raise RuntimeError(f"GSVC_JSON not found: {GSVC_JSON}")
-        creds = Credentials.from_service_account_file(GSVC_JSON, scopes=scopes)
-        logger.info("🏠 Đã nạp GSheet Creds từ file JSON cục bộ")
+        # Nếu không có (Chạy ở máy nhà), lúc này mới tìm file
+        if os.path.exists(GSVC_JSON):
+            creds = Credentials.from_service_account_file(GSVC_JSON, scopes=scopes)
+            logger.info("🏠 Nạp GSheet Creds từ file JSON cục bộ")
+        else:
+            # Nếu cả 2 đều không có thì mới báo lỗi
+            raise RuntimeError("❌ Không tìm thấy thông tin xác thực Google (cả Env và File)")
+
     # ------------------------------
 
     _gs_client = gspread.authorize(creds)
