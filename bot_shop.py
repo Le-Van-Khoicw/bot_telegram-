@@ -2076,7 +2076,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
 
     logger.info("✅ Bot running...")
-    app.run_polling(stop_signals=False)
+    app.run_polling(drop_pending_updates=True, stop_signals=False)
+
 
 if __name__ == "__main__":
     main()
