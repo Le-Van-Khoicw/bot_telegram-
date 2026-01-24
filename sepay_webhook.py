@@ -3,6 +3,7 @@ import io
 import re
 import asyncio
 import logging
+import json 
 from datetime import datetime, timedelta
 from gspread.cell import Cell
 from typing import Any, Dict, Optional, List, Tuple
@@ -14,7 +15,7 @@ from google.oauth2.service_account import Credentials
 
 from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
-from dotenv import load_dotenv  
+from dotenv import load_dotenv
 load_dotenv()
 # =========================
 # LOGGING
@@ -175,6 +176,35 @@ def verify_sepay_auth(request: Request) -> bool:
     # Trường hợp gửi raw key
     return auth == SEPAY_API_KEY
 
+# def init_gsheet() -> None:
+#     global gs_client, gs_sheet, ws_orders, ws_pool, ws_res, ws_ful
+
+#     if ws_orders and ws_pool and ws_res:
+#         return
+
+#     if not GSHEET_ID:
+#         raise RuntimeError("Missing GSHEET_ID")
+#     if not GSVC_JSON:
+#         raise RuntimeError("Missing GSVC_JSON")
+#     if not os.path.exists(GSVC_JSON):
+#         raise RuntimeError(f"GSVC_JSON not found: {GSVC_JSON}")
+
+#     scopes = [
+#         "https://www.googleapis.com/auth/spreadsheets",
+#         "https://www.googleapis.com/auth/drive",
+#     ]
+#     creds = Credentials.from_service_account_file(GSVC_JSON, scopes=scopes)
+#     gs_client = gspread.authorize(creds)
+#     gs_sheet = gs_client.open_by_key(GSHEET_ID)
+
+#     ws_orders = gs_sheet.worksheet(ORDERS_TAB)
+#     ws_pool = gs_sheet.worksheet(POOL_TAB)
+#     ws_res = gs_sheet.worksheet(RES_TAB)
+#     try:
+#         ws_ful = gs_sheet.worksheet(FUL_TAB)
+#     except Exception:
+#         ws_ful = None
+
 def init_gsheet() -> None:
     global gs_client, gs_sheet, ws_orders, ws_pool, ws_res, ws_ful
 
@@ -183,22 +213,38 @@ def init_gsheet() -> None:
 
     if not GSHEET_ID:
         raise RuntimeError("Missing GSHEET_ID")
-    if not GSVC_JSON:
-        raise RuntimeError("Missing GSVC_JSON")
-    if not os.path.exists(GSVC_JSON):
-        raise RuntimeError(f"GSVC_JSON not found: {GSVC_JSON}")
 
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = Credentials.from_service_account_file(GSVC_JSON, scopes=scopes)
+
+    # --- ĐOẠN CHỐT HẠ ĐỂ CHẠY TRÊN RENDER ĐÂY NÈ NÍ ---
+    json_content = os.getenv("GOOGLE_JSON_CONTENT")
+
+    if json_content:
+        # Nếu chạy trên Render (Ưu tiên nạp từ biến môi trường)
+        try:
+            info = json.loads(json_content)
+            creds = Credentials.from_service_account_info(info, scopes=scopes)
+            # logger.info("✅ Webhook nạp GSheet Creds từ Env Variable") # Nếu có logger thì dùng
+        except Exception as e:
+            raise RuntimeError(f"Lỗi phân giải GOOGLE_JSON_CONTENT: {e}")
+    else:
+        # Nếu chạy ở máy nhà (Nạp từ file vật lý)
+        if not GSVC_JSON or not os.path.exists(GSVC_JSON):
+            raise RuntimeError(f"Không tìm thấy file JSON Google Sheets tại: {GSVC_JSON}")
+        creds = Credentials.from_service_account_file(GSVC_JSON, scopes=scopes)
+        # logger.info("🏠 Webhook nạp GSheet Creds từ file JSON cục bộ")
+    # -----------------------------------------------
+
     gs_client = gspread.authorize(creds)
     gs_sheet = gs_client.open_by_key(GSHEET_ID)
 
     ws_orders = gs_sheet.worksheet(ORDERS_TAB)
     ws_pool = gs_sheet.worksheet(POOL_TAB)
     ws_res = gs_sheet.worksheet(RES_TAB)
+
     try:
         ws_ful = gs_sheet.worksheet(FUL_TAB)
     except Exception:
