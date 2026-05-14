@@ -32,6 +32,9 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.helpers import escape_markdown
+
+from mail_reader import MailReaderError, read_inbox_messages
 SHEETS_LOCK = asyncio.Lock()
 # ================== LOGGING ==================
 logging.basicConfig(
@@ -906,6 +909,8 @@ def build_products_menu_kb(
         InlineKeyboardButton("💬 Hỗ trợ", callback_data="go_support"),
     ])
 
+    buttons.append([InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help")])
+
     # Menu chính
     buttons.append([InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")])
 
@@ -1003,6 +1008,80 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         "Tính năng này sẽ được cập nhật sớm.\n\n"
         "👉 Hiện tại bạn bấm 🛍 *Sản phẩm* để mua nhé.",
+        parse_mode="Markdown",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    raw = " ".join(context.args).strip()
+    if not raw and update.message.reply_to_message:
+        raw = (update.message.reply_to_message.text or "").strip()
+
+    if not raw:
+        await update.message.reply_text(
+            "Dùng: `/mail email|refresh_token|client_id`\n"
+            "Hoặc reply vào tin chứa chuỗi mail rồi gõ `/mail`.",
+            parse_mode="Markdown",
+        )
+        return
+
+    loading_msg = await update.message.reply_text("Đang đọc hòm thư...")
+
+    try:
+        result = await asyncio.to_thread(read_inbox_messages, raw, 5)
+    except MailReaderError as e:
+        await loading_msg.edit_text(f"Không đọc được mail:\n{e}")
+        return
+    except Exception as e:
+        logger.exception("cmd_mail failed")
+        await loading_msg.edit_text(f"Lỗi không xác định khi đọc mail:\n{e}")
+        return
+
+    email = escape_markdown(result.get("email", ""), version=2)
+    messages = result.get("messages") or []
+    if not messages:
+        await loading_msg.edit_text(f"Không thấy mail nào trong inbox của `{email}`.", parse_mode="MarkdownV2")
+        return
+
+    lines = [f"*Inbox:* `{email}`"]
+    for idx, msg in enumerate(messages, start=1):
+        sender = escape_markdown(msg.get("from", ""), version=2)
+        time_text = escape_markdown(msg.get("time", ""), version=2)
+        subject = escape_markdown(msg.get("subject", ""), version=2)
+        preview = escape_markdown((msg.get("preview", "") or "")[:350], version=2)
+        codes = escape_markdown(msg.get("codes", ""), version=2)
+
+        block = [
+            "",
+            f"*{idx}\\. {subject}*",
+            f"From: `{sender}`",
+            f"Time: `{time_text}`",
+        ]
+        if codes:
+            block.append(f"Code: `{codes}`")
+        if preview:
+            block.append(preview)
+        lines.extend(block)
+
+    text = "\n".join(lines)
+    if len(text) > 3900:
+        text = text[:3900] + "\n..."
+
+    await loading_msg.edit_text(text, parse_mode="MarkdownV2", disable_web_page_preview=True)
+
+
+async def send_mail_help(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "📬 *ĐỌC HÒM THƯ*\n\n"
+            "Cách 1:\n"
+            "`/mail email|refresh_token|client_id`\n\n"
+            "Cách 2:\n"
+            "Gửi chuỗi mail vào đây, reply tin đó rồi gõ `/mail`.\n\n"
+            "Bot sẽ đọc 5 mail mới nhất và tự bắt mã số nếu có."
+        ),
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(),
     )
@@ -1988,6 +2067,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return await send_support(q.from_user.id, context)
 
+    if data == "mail_help":
+        await q.answer()
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        return await send_mail_help(q.from_user.id, context)
+
     if data == "back_main":
         await q.answer()
         try:
@@ -2071,6 +2158,7 @@ def main():
     app.add_handler(CommandHandler("support", cmd_support))
     app.add_handler(CommandHandler("game", cmd_game))
     app.add_handler(CommandHandler("hangve", cmd_hangve))
+    app.add_handler(CommandHandler("mail", cmd_mail))
 
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
