@@ -1013,19 +1013,12 @@ async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    raw = " ".join(context.args).strip()
-    if not raw and update.message.reply_to_message:
-        raw = (update.message.reply_to_message.text or "").strip()
+def looks_like_mail_account(text: str) -> bool:
+    text = (text or "").strip()
+    return "@" in text and ("|" in text or "----" in text)
 
-    if not raw:
-        await update.message.reply_text(
-            "Dùng: `/mail email|refresh_token|client_id`\n"
-            "Hoặc reply vào tin chứa chuỗi mail rồi gõ `/mail`.",
-            parse_mode="Markdown",
-        )
-        return
 
+async def read_mail_from_text(update: Update, raw: str):
     loading_msg = await update.message.reply_text("Đang đọc hòm thư...")
 
     try:
@@ -1071,6 +1064,22 @@ async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await loading_msg.edit_text(text, parse_mode="MarkdownV2", disable_web_page_preview=True)
 
 
+async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    raw = " ".join(context.args).strip()
+    if not raw and update.message.reply_to_message:
+        raw = (update.message.reply_to_message.text or "").strip()
+
+    if not raw:
+        await update.message.reply_text(
+            "Dùng: `/mail email|refresh_token|client_id`\n"
+            "Hoặc gửi thẳng chuỗi `email|refresh_token|client_id` vào chat.",
+            parse_mode="Markdown",
+        )
+        return
+
+    await read_mail_from_text(update, raw)
+
+
 async def send_mail_help(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         chat_id=chat_id,
@@ -1079,7 +1088,9 @@ async def send_mail_help(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
             "Cách 1:\n"
             "`/mail email|refresh_token|client_id`\n\n"
             "Cách 2:\n"
-            "Gửi chuỗi mail vào đây, reply tin đó rồi gõ `/mail`.\n\n"
+            "Gửi thẳng chuỗi `email|refresh_token|client_id` vào chat.\n\n"
+            "Cách 3:\n"
+            "Reply tin chứa chuỗi mail rồi gõ `/mail`.\n\n"
             "Bot sẽ đọc 5 mail mới nhất và tự bắt mã số nếu có."
         ),
         parse_mode="Markdown",
@@ -2001,6 +2012,9 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip()
     text = text.replace("\ufe0f", "")
     text = " ".join(text.split())
+
+    if looks_like_mail_account(text):
+        return await read_mail_from_text(update, text)
 
     if text == BTN_PRODUCTS:
         return await show_products(user.id, context)

@@ -30,7 +30,7 @@ def parse_mail_account(raw: str) -> Dict[str, str]:
         raise MailReaderError("Thiếu chuỗi mail.")
 
     sep = "|" if "|" in text else "----"
-    parts = [p.strip() for p in text.split(sep) if p.strip()]
+    parts = [re.sub(r"\s+", "", p.strip()) for p in text.split(sep) if p.strip()]
     if len(parts) < 2:
         raise MailReaderError("Sai định dạng. Cần dạng email|refresh_token|client_id.")
 
