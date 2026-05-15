@@ -1018,6 +1018,12 @@ def looks_like_mail_account(text: str) -> bool:
     return "@" in text and ("|" in text or "----" in text)
 
 
+def normalize_menu_text(text: str) -> str:
+    text = (text or "").replace("\ufe0f", "")
+    text = re.sub(r"[^\wÀ-ỹ\s]", " ", text, flags=re.UNICODE)
+    return " ".join(text.casefold().split())
+
+
 async def read_mail_from_text(update: Update, raw: str):
     loading_msg = await update.message.reply_text("Đang đọc hòm thư...")
 
@@ -2007,22 +2013,26 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = update.effective_user
-    await gs_call(upsert_user, update.effective_chat.id, user.username or "", user.full_name or "")
+    try:
+        await gs_call(upsert_user, update.effective_chat.id, user.username or "", user.full_name or "")
+    except Exception:
+        logger.exception("upsert_user failed")
 
     text = (update.message.text or "").strip()
     text = text.replace("\ufe0f", "")
     text = " ".join(text.split())
+    menu_text = normalize_menu_text(text)
 
     if looks_like_mail_account(text):
         return await read_mail_from_text(update, text)
 
-    if text == BTN_PRODUCTS:
+    if text == BTN_PRODUCTS or "sản phẩm" in menu_text or "san pham" in menu_text:
         return await show_products(user.id, context)
-    if text == BTN_SUPPORT:
+    if text == BTN_SUPPORT or "hỗ trợ" in menu_text or "ho tro" in menu_text:
         return await send_support(user.id, context)
-    if text == BTN_ORDERS:
+    if text == BTN_ORDERS or "đơn hàng" in menu_text or "don hang" in menu_text:
         return await show_orders(user.id, context)
-    if text == BTN_GAME:
+    if text == BTN_GAME or menu_text == "game":
         return await cmd_game(update, context)
 
     await update.message.reply_text("Bấm menu để sử dụng nhé.", reply_markup=main_menu_keyboard())
