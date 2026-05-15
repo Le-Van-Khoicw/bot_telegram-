@@ -2166,16 +2166,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await q.answer()
 
-# ================== MAIN ==================
-def main():
-    try:
-        init_sheets()
-        logger.info("✅ Sheets OK: %s", GSHEET_ID)
-    except Exception as e:
-        logger.error("❌ init_sheets error: %s", e)
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
+def configure_application(app: Application) -> Application:
     if not app.job_queue:
         logger.warning("⚠️ JobQueue not available. Install: pip install python-telegram-bot[job-queue]")
     else:
@@ -2192,7 +2183,23 @@ def main():
 
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
+    return app
 
+
+def build_application() -> Application:
+    try:
+        init_sheets()
+        logger.info("✅ Sheets OK: %s", GSHEET_ID)
+    except Exception as e:
+        logger.error("❌ init_sheets error: %s", e)
+
+    app = Application.builder().token(BOT_TOKEN).build()
+    return configure_application(app)
+
+
+# ================== MAIN ==================
+def main():
+    app = build_application()
     logger.info("✅ Bot running...")
     app.run_polling(drop_pending_updates=True, stop_signals=False)
 
