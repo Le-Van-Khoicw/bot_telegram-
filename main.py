@@ -38,11 +38,15 @@ async def health_check_head():
 
 
 def run_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
         logger.info("Starting Telegram bot polling in background thread...")
         start_bot_logic()
     except Exception:
         logger.exception("Telegram bot crashed")
+    finally:
+        loop.close()
 
 
 if __name__ == "__main__":
