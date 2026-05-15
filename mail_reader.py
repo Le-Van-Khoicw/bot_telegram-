@@ -2,6 +2,7 @@ import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -10,6 +11,7 @@ GRAPH_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 GRAPH_MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
 
 DEFAULT_GRAPH_SCOPE = "https://graph.microsoft.com/Mail.Read offline_access"
+DISPLAY_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 class MailReaderError(RuntimeError):
@@ -137,7 +139,7 @@ def _format_time(value: str) -> str:
         return ""
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return dt.strftime("%H:%M %d/%m/%Y")
+        return dt.astimezone(DISPLAY_TZ).strftime("%H:%M %d/%m/%Y GMT+7")
     except Exception:
         return value
 
