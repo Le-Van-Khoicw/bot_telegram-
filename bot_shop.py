@@ -1028,7 +1028,7 @@ async def read_mail_from_text(update: Update, raw: str):
     loading_msg = await update.message.reply_text("Đang đọc hòm thư...")
 
     try:
-        result = await asyncio.to_thread(read_inbox_messages, raw, 5)
+        result = await asyncio.to_thread(read_inbox_messages, raw, 10)
     except MailReaderError as e:
         await loading_msg.edit_text(f"Không đọc được mail:\n{e}")
         return
@@ -1043,7 +1043,30 @@ async def read_mail_from_text(update: Update, raw: str):
         await loading_msg.edit_text(f"Không thấy mail nào trong inbox của `{email}`.", parse_mode="MarkdownV2")
         return
 
+    latest_code = ""
+    latest_subject = ""
+    for msg in messages:
+        sender_raw = (msg.get("from") or "").casefold()
+        subject_raw = (msg.get("subject") or "").casefold()
+        codes_raw = (msg.get("codes") or "").strip()
+        if codes_raw and ("openai" in sender_raw or "chatgpt" in subject_raw or "verification" in subject_raw):
+            latest_code = codes_raw.split(",", 1)[0].strip()
+            latest_subject = msg.get("subject", "")
+            break
+    if not latest_code:
+        for msg in messages:
+            codes_raw = (msg.get("codes") or "").strip()
+            if codes_raw:
+                latest_code = codes_raw.split(",", 1)[0].strip()
+                latest_subject = msg.get("subject", "")
+                break
+
     lines = [f"*Inbox:* `{email}`"]
+    if latest_code:
+        code_md = escape_markdown(latest_code, version=2)
+        subject_md = escape_markdown(latest_subject, version=2)
+        lines.extend(["", f"*Mã mới nhất:* `{code_md}`", f"Mail: {subject_md}"])
+
     for idx, msg in enumerate(messages, start=1):
         sender = escape_markdown(msg.get("from", ""), version=2)
         time_text = escape_markdown(msg.get("time", ""), version=2)

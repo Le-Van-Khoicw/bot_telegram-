@@ -1,6 +1,7 @@
 import os
 import re
 from datetime import datetime
+from html import unescape
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -92,7 +93,7 @@ def read_inbox_messages(raw_account: str, limit: int = 5) -> Dict[str, Any]:
     params = {
         "$top": max(1, min(int(limit or 5), 10)),
         "$orderby": "receivedDateTime desc",
-        "$select": "subject,from,receivedDateTime,bodyPreview",
+        "$select": "subject,from,receivedDateTime,bodyPreview,body",
     }
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -123,15 +124,28 @@ def _normalize_message(msg: Dict[str, Any]) -> Dict[str, str]:
     sender_name = (((msg.get("from") or {}).get("emailAddress") or {}).get("name") or "").strip()
     subject = (msg.get("subject") or "(no subject)").strip()
     preview = (msg.get("bodyPreview") or "").strip()
+    body_text = _plain_body((((msg.get("body") or {}).get("content")) or "").strip())
     received = _format_time(msg.get("receivedDateTime") or "")
-    codes = extract_codes(f"{subject}\n{preview}")
+    codes = extract_codes(f"{subject}\n{preview}\n{body_text}")
     return {
         "from": sender or sender_name or "(unknown)",
         "time": received,
         "subject": subject,
         "preview": preview,
+        "body": body_text,
         "codes": ", ".join(codes),
     }
+
+
+def _plain_body(value: str) -> str:
+    if not value:
+        return ""
+    text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", value)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</p\s*>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = unescape(text)
+    return " ".join(text.split())
 
 
 def _format_time(value: str) -> str:
