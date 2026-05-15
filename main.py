@@ -59,6 +59,11 @@ async def health_check():
     return {"status": "Bot & Webhook are alive!", "telegram_mode": "webhook" if telegram_app else "polling"}
 
 
+@app.get("/ping")
+async def ping():
+    return "ok"
+
+
 @app.head("/")
 async def health_check_head():
     return None
