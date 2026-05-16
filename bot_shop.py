@@ -8,7 +8,7 @@ import asyncio
 import time
 import urllib.request
 import json
-from telegram.constants import ChatAction
+from telegram.constants import ChatAction, ParseMode
 from gspread.cell import Cell
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
@@ -59,7 +59,16 @@ TAB_USERS = os.getenv("USERS_TAB", "USERS").strip()
 TAB_FUL = os.getenv("FULFILLMENTS_TAB", "FULFILLMENTS").strip()
 _ws_users = None
 
-ADMIN_IDS = {6261937216}  # <-- đổi thành Telegram user id của bạn
+def parse_admin_ids(raw: str) -> set[int]:
+    ids: set[int] = set()
+    for part in re.split(r"[,\s]+", raw or ""):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    return ids
+
+
+ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", "6261937216"))
 
 ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "900"))  # 15 phút
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
@@ -120,6 +129,26 @@ def stock_count_ready_by_code_cached(ttl: int = 5) -> Dict[str, int]:
     data = stock_count_ready_by_code()
     _CACHE["stock"] = {"ts": _ts(), "data": data}
     return data
+
+
+def money_vnd(value: Any) -> str:
+    return f"{normalize_int(value, 0):,}".replace(",", ".") + "đ"
+
+
+async def notify_admins(context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None) -> None:
+    if not ADMIN_IDS:
+        return
+    for admin_id in ADMIN_IDS:
+        try:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=text,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            logger.warning("notify admin failed admin_id=%s: %s", admin_id, e)
 
 async def gs_call(fn, *args, **kwargs):
     # ✅ serialize gspread calls + chạy trong thread để bot không bị đơ
@@ -1523,6 +1552,20 @@ async def checkout_flow(
             name=f"countdown_{order_id}",
         )
 
+    await notify_admins(
+        context,
+        (
+            "🛒 *Đơn mới đang chờ thanh toán*\n"
+            f"Order: `{escape_markdown(order_id, version=2)}`\n"
+            f"Khách: `{user_id}`\n"
+            f"Sản phẩm: {escape_markdown(str(product.get('name', product['stock_code'])), version=2)}\n"
+            f"Stock: `{escape_markdown(str(product['stock_code']), version=2)}`\n"
+            f"SL: `{qty}`\n"
+            f"Tổng: *{escape_markdown(money_vnd(total), version=2)}*\n"
+            f"Tạo lúc: `{escape_markdown(created_at, version=2)}`"
+        ),
+    )
+
     return True
 
 
@@ -1725,6 +1768,19 @@ async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order
             pass
 
     qty_val = normalize_int(order.get("qty"), len(secrets_plain) if secrets_plain else len(items))
+
+    await notify_admins(
+        context,
+        (
+            "✅ *Đơn đã giao thành công*\n"
+            f"Order: `{escape_markdown(order_id, version=2)}`\n"
+            f"Khách: `{q.from_user.id}`\n"
+            f"Stock: `{escape_markdown(stock_code, version=2)}`\n"
+            f"SL: `{qty_val}`\n"
+            f"Tổng: *{escape_markdown(money_vnd(order.get('total')), version=2)}*\n"
+            f"Giao lúc: `{escape_markdown(delivered_at, version=2)}`"
+        ),
+    )
 
     # >=5 -> gửi file + preview
     if qty_val >= 5 or len(secrets_plain) >= 5:

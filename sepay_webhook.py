@@ -43,6 +43,32 @@ FUL_TAB = os.getenv("FULFILLMENTS_TAB", "FULFILLMENTS").strip()
 SUPPORT_TELE_LINK = os.getenv("SUPPORT_TELE_LINK", "https://t.me/khoivancw").strip()
 SHEETS_LOCK = asyncio.Lock()
 
+def parse_admin_ids(raw: str) -> set[int]:
+    ids: set[int] = set()
+    for part in re.split(r"[,\s]+", raw or ""):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    return ids
+
+
+ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", "6261937216"))
+
+
+def money_vnd(value: Any) -> str:
+    return f"{safe_int(value, 0):,}".replace(",", ".") + "đ"
+
+
+async def notify_admins(text: str) -> None:
+    if not tg_bot or not ADMIN_IDS:
+        return
+    for admin_id in ADMIN_IDS:
+        try:
+            await tg_bot.send_message(chat_id=admin_id, text=text, disable_web_page_preview=True)
+        except Exception as e:
+            logger.warning("notify admin failed admin_id=%s: %s", admin_id, e)
+
+
 def kb_after_delivery() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("💬 Hỗ trợ", url=SUPPORT_TELE_LINK)],
@@ -687,6 +713,15 @@ async def process_payment(payload: Dict[str, Any]) -> None:
             rownum,
             {"status": "PAID", "deliver_text": "(POOL_EMPTY)", "delivered_at": ""},
         )
+        await notify_admins(
+            "⚠️ Đơn đã thanh toán nhưng chưa giao được\n"
+            f"Order: {canonical_oid}\n"
+            f"Khách: {user_id}\n"
+            f"Stock: {stock_code}\n"
+            f"SL: {qty}\n"
+            f"Số tiền: {money_vnd(amount)}\n"
+            "Lý do: Không lấy được item HELD/secret từ POOL."
+        )
         return
 
     delivered_at = now_str()
@@ -737,6 +772,17 @@ async def process_payment(payload: Dict[str, Any]) -> None:
                 )
             except Exception:
                 pass
+
+    await notify_admins(
+        "✅ Có đơn đã thanh toán và giao tự động\n"
+        f"Order: {canonical_oid}\n"
+        f"Khách: {user_id}\n"
+        f"Stock: {stock_code}\n"
+        f"SL: {qty}\n"
+        f"Số tiền: {money_vnd(amount)}\n"
+        f"TX: {txn_id}\n"
+        f"Giao lúc: {delivered_at}"
+    )
 
     logger.info("DELIVERED ok: %s user=%s qty=%s secrets=%s", canonical_oid, user_id, qty, len(secrets))
 def get_all_pending_orders() -> List[Tuple[int, Dict[str, Any]]]:
