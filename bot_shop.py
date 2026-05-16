@@ -56,6 +56,7 @@ TAB_PRODUCTS = os.getenv("PRODUCTS_TAB", "PRODUCTS").strip()
 TAB_POOL = os.getenv("POOL_TAB", "POOL").strip()
 TAB_RES = os.getenv("RESERVATIONS_TAB", "RESERVATIONS").strip()
 TAB_USERS = os.getenv("USERS_TAB", "USERS").strip()
+TAB_FUL = os.getenv("FULFILLMENTS_TAB", "FULFILLMENTS").strip()
 _ws_users = None
 
 ADMIN_IDS = {6261937216}  # <-- đổi thành Telegram user id của bạn
@@ -86,6 +87,7 @@ _ws_orders = None
 _ws_products = None
 _ws_pool = None
 _ws_res = None
+_ws_ful = None
 
 
 PENDING_QTY: Dict[int, Dict[str, Any]] = {}  # user_id -> {"product_id": ...}
@@ -359,7 +361,7 @@ def get_all_user_chat_ids() -> List[int]:
 
 
 def init_sheets():
-    global _gs_client, _gs_sheet, _ws_orders, _ws_products, _ws_pool, _ws_res, _ws_users
+    global _gs_client, _gs_sheet, _ws_orders, _ws_products, _ws_pool, _ws_res, _ws_users, _ws_ful
 
     if _ws_orders and _ws_products and _ws_pool and _ws_res and _ws_users:
         return
@@ -403,6 +405,10 @@ def init_sheets():
     _ws_pool = _gs_sheet.worksheet(TAB_POOL)
     _ws_res = _gs_sheet.worksheet(TAB_RES)
     _ws_users = _gs_sheet.worksheet(TAB_USERS)
+    try:
+        _ws_ful = _gs_sheet.worksheet(TAB_FUL)
+    except Exception:
+        _ws_ful = None
 def headers_map(ws) -> Dict[str, int]:
     headers = ws.row_values(1)
     return {str(h).strip().lower(): i for i, h in enumerate(headers, start=1)}
@@ -743,44 +749,6 @@ def list_user_orders(user_id: int, limit: int = 10) -> List[Dict[str, str]]:
     rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return rows[:limit]
 
-
-def get_admin_snapshot(limit: int = 100) -> Dict[str, Any]:
-    init_sheets()
-    products = load_products()
-    stock_ready = stock_count_ready_by_code()
-    orders = get_all_records(_ws_orders)
-    orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-
-    status_counts: Dict[str, int] = {}
-    revenue = 0
-    for order in orders:
-        status = (order.get("status") or "UNKNOWN").strip().upper()
-        status_counts[status] = status_counts.get(status, 0) + 1
-        if status in ("PAID", "DELIVERED"):
-            revenue += normalize_int(order.get("total"), 0)
-
-    product_rows = []
-    for product in products:
-        stock_code = product.get("stock_code", "")
-        product_rows.append({
-            "product_id": product.get("product_id", ""),
-            "name": product.get("name", ""),
-            "stock_code": stock_code,
-            "price": product.get("price", 0),
-            "ready": stock_ready.get(stock_code, 0),
-        })
-
-    return {
-        "generated_at": now_str(),
-        "timezone": APP_TIMEZONE,
-        "summary": {
-            "orders": len(orders),
-            "revenue": revenue,
-            "status_counts": status_counts,
-        },
-        "products": product_rows,
-        "orders": orders[: max(1, min(int(limit or 100), 300))],
-    }
 
 # ================== FULFILLMENTS (optional) ==================
 def append_fulfillment(order_id: str, item_id: str, stock_code: str, secret: str, delivered_at: str) -> None:
