@@ -3,7 +3,8 @@ import os
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from admin_services import add_stock, release_order, save_product, snapshot, update_order
 
@@ -431,9 +432,23 @@ def require_admin(request: Request) -> None:
 
 
 def register_admin_routes(app: FastAPI) -> None:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    fe_dist_dir = os.path.join(base_dir, "fe", "dist")
+    fe_assets_dir = os.path.join(fe_dist_dir, "assets")
+    fe_index = os.path.join(fe_dist_dir, "index.html")
+    if os.path.isdir(fe_assets_dir):
+        app.mount("/admin/assets", StaticFiles(directory=fe_assets_dir), name="admin_assets")
+
     @app.get("/admin", response_class=HTMLResponse)
     async def admin_page():
+        if os.path.exists(fe_index):
+            return FileResponse(fe_index)
         return ADMIN_HTML
+
+    @app.get("/admin/api/login")
+    async def admin_login(request: Request):
+        require_admin(request)
+        return {"ok": True}
 
     @app.get("/admin/api/snapshot")
     async def admin_snapshot(request: Request, limit: int = 100):
