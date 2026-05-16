@@ -7,7 +7,8 @@ import { Badge } from "../ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { Warehouse, Plus } from "lucide-react";
+import { Warehouse, Plus, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 import { adminApi, text, type AdminSnapshot } from "../../api";
 
 interface Props {
@@ -25,7 +26,10 @@ export function Inventory({ data, adminKey, refresh }: Props) {
   const [busy, setBusy] = useState(false);
 
   const pool = data?.pool || [];
-  const productCodes = useMemo(() => Array.from(new Set((data?.products || []).map((p) => text(p.stock_code)).filter((x) => x !== "—"))), [data]);
+  const productCodes = useMemo(
+    () => Array.from(new Set((data?.products || []).map((p) => text(p.stock_code)).filter((x) => x !== "—"))),
+    [data],
+  );
   const counts = {
     READY: pool.filter((i) => text(i.status).toUpperCase() === "READY").length,
     HELD: pool.filter((i) => text(i.status).toUpperCase() === "HELD").length,
@@ -43,6 +47,7 @@ export function Inventory({ data, adminKey, refresh }: Props) {
     try {
       await adminApi("/admin/api/stock", adminKey, { method: "POST", body: JSON.stringify({ stock_code: addCode, items: addData }) });
       setAddData("");
+      toast.success("Đã thêm stock vào kho");
       await refresh();
     } finally {
       setBusy(false);
@@ -52,8 +57,27 @@ export function Inventory({ data, adminKey, refresh }: Props) {
   const releaseHeld = async () => {
     setBusy(true);
     try {
-      await adminApi("/admin/api/orders/release", adminKey, { method: "POST", body: JSON.stringify({ order_id: releaseOrderId, status: "EXPIRED" }) });
+      const result = await adminApi<{ released: number }>("/admin/api/orders/release", adminKey, {
+        method: "POST",
+        body: JSON.stringify({ order_id: releaseOrderId, status: "EXPIRED" }),
+      });
       setReleaseOrderId("");
+      toast.success(`Đã trả ${result.released || 0} item về READY`);
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const releaseHeldBulk = async (expiredOnly: boolean) => {
+    if (!expiredOnly && !window.confirm("Trả toàn bộ HELD về READY? Chỉ dùng khi chắc chắn các đơn này không cần giữ nữa.")) return;
+    setBusy(true);
+    try {
+      const result = await adminApi<{ released: number; orders: number }>("/admin/api/stock/release-held", adminKey, {
+        method: "POST",
+        body: JSON.stringify({ expired_only: expiredOnly, status: "EXPIRED" }),
+      });
+      toast.success(`Đã trả ${result.released || 0} item từ ${result.orders || 0} đơn về READY`);
       await refresh();
     } finally {
       setBusy(false);
@@ -146,11 +170,24 @@ export function Inventory({ data, adminKey, refresh }: Props) {
         </TabsContent>
 
         <TabsContent value="release" className="space-y-3 pt-2">
-          <Card className="shadow-sm max-w-xl">
+          <Card className="shadow-sm max-w-2xl">
             <CardContent className="p-4 space-y-3">
-              <p className="text-sm text-muted-foreground">Nhập Order ID đang HELD để trả các item của đơn về READY.</p>
-              <Input placeholder="ORD..." value={releaseOrderId} onChange={(e) => setReleaseOrderId(e.target.value)} />
-              <Button variant="outline" onClick={releaseHeld} disabled={busy || !releaseOrderId}>Trả HELD về READY</Button>
+              <p className="text-sm text-muted-foreground">
+                Bình thường bot sẽ tự trả HELD về READY sau thời gian hết hạn. Nếu bị kẹt do restart/deploy, dùng nút bên dưới.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button className="gap-2" variant="outline" onClick={() => releaseHeldBulk(true)} disabled={busy}>
+                  <RotateCcw size={15} /> Trả HELD quá hạn
+                </Button>
+                <Button className="gap-2" variant="destructive" onClick={() => releaseHeldBulk(false)} disabled={busy}>
+                  <RotateCcw size={15} /> Trả toàn bộ HELD
+                </Button>
+              </div>
+              <div className="border-t pt-3 space-y-2">
+                <p className="text-sm text-muted-foreground">Hoặc nhập riêng Order ID đang HELD để trả các item của đơn về READY.</p>
+                <Input placeholder="ORD..." value={releaseOrderId} onChange={(e) => setReleaseOrderId(e.target.value)} />
+                <Button variant="outline" onClick={releaseHeld} disabled={busy || !releaseOrderId}>Trả Order ID này về READY</Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

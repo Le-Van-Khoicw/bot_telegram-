@@ -196,6 +196,70 @@ def release_order(order_id: str, status: str = "EXPIRED") -> Dict[str, Any]:
     return {"ok": True, "released": released}
 
 
+def _is_expired_hold(value: str) -> bool:
+    dt = shop.parse_dt(value)
+    return bool(dt and dt <= shop.now_dt())
+
+
+def release_holds(expired_only: bool = True, status: str = "EXPIRED") -> Dict[str, Any]:
+    shop.init_sheets()
+    headers = _headers(shop._ws_pool)
+    if not headers:
+        raise RuntimeError("POOL thieu header")
+
+    c_status = headers.get("status")
+    c_hold_oid = headers.get("hold_order_id")
+    c_hold_exp = headers.get("hold_expires_at")
+    if not c_status:
+        raise RuntimeError("POOL thieu cot status")
+    if expired_only and not c_hold_exp:
+        raise RuntimeError("POOL thieu cot hold_expires_at")
+
+    values = shop._ws_pool.get_all_values()
+    order_ids: set[str] = set()
+    orphan_cells: List[Cell] = []
+    orphan_released = 0
+
+    for idx, row in enumerate(values[1:], start=2):
+        current_status = row[c_status - 1].strip().upper() if c_status - 1 < len(row) else ""
+        if current_status != "HELD":
+            continue
+
+        expires_at = row[c_hold_exp - 1].strip() if c_hold_exp and c_hold_exp - 1 < len(row) else ""
+        if expired_only and not _is_expired_hold(expires_at):
+            continue
+
+        order_id = row[c_hold_oid - 1].strip() if c_hold_oid and c_hold_oid - 1 < len(row) else ""
+        if order_id:
+            order_ids.add(order_id)
+            continue
+
+        orphan_cells.append(Cell(idx, c_status, "READY"))
+        for key in ("hold_order_id", "hold_at", "hold_expires_at"):
+            col = headers.get(key)
+            if col:
+                orphan_cells.append(Cell(idx, col, ""))
+        orphan_released += 1
+
+    released = orphan_released
+    for order_id in sorted(order_ids):
+        released += shop.release_hold_by_order(order_id, status or "EXPIRED")
+
+    if orphan_cells:
+        shop._ws_pool.update_cells(orphan_cells, value_input_option="USER_ENTERED")
+
+    if released:
+        shop.invalidate_stock_cache()
+
+    return {
+        "ok": True,
+        "expired_only": expired_only,
+        "orders": len(order_ids),
+        "released": released,
+        "orphan_released": orphan_released,
+    }
+
+
 def update_order(order_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
     if not order_id:
         raise ValueError("Missing order_id")

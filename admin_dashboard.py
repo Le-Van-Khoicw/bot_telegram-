@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from admin_services import add_stock, release_order, save_product, snapshot, update_order
+from admin_services import add_stock, release_holds, release_order, save_product, snapshot, update_order
 
 
 ADMIN_HTML = """<!doctype html>
@@ -470,6 +470,16 @@ def register_admin_routes(app: FastAPI) -> None:
         require_admin(request)
         data: Dict[str, Any] = await request.json()
         return await asyncio.to_thread(release_order, data.get("order_id", ""), data.get("status", "EXPIRED"))
+
+    @app.post("/admin/api/stock/release-held")
+    async def admin_release_holds(request: Request):
+        require_admin(request)
+        data: Dict[str, Any] = await request.json()
+        return await asyncio.to_thread(
+            release_holds,
+            bool(data.get("expired_only", True)),
+            data.get("status", "EXPIRED"),
+        )
 
     @app.post("/admin/api/orders/update")
     async def admin_update_order(request: Request):
