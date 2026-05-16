@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timedelta
 from gspread.cell import Cell
 from typing import Any, Dict, Optional, List, Tuple
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 
@@ -48,7 +49,9 @@ def kb_after_delivery() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("⬅️ Menu", callback_data="back_main")],
     ])
 
-ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "600"))  # ✅ 10 phút mặc định
+ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "900"))  # 15 phút mặc định
+APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
+LOCAL_TZ = ZoneInfo(APP_TIMEZONE)
 
 # If true: only mark PAID/DELIVERED when transferAmount == order.total
 CHECK_AMOUNT = os.getenv("CHECK_AMOUNT", "1").strip() not in ("0", "false", "False")
@@ -150,10 +153,13 @@ def is_expired(created_at: str) -> bool:
     dt = parse_dt(created_at)
     if not dt:
         return False
-    return (datetime.now() - dt).total_seconds() > ORDER_TTL_SECONDS
+    return (now_dt() - dt).total_seconds() > ORDER_TTL_SECONDS
+
+def now_dt() -> datetime:
+    return datetime.now(LOCAL_TZ).replace(tzinfo=None)
 
 def now_str() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return now_dt().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def verify_sepay_auth(request: Request) -> bool:

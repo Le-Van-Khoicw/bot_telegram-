@@ -12,6 +12,7 @@ from telegram.constants import ChatAction
 from gspread.cell import Cell
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
+from zoneinfo import ZoneInfo
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -60,6 +61,8 @@ _ws_users = None
 ADMIN_IDS = {6261937216}  # <-- đổi thành Telegram user id của bạn
 
 ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "900"))  # 15 phút
+APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
+LOCAL_TZ = ZoneInfo(APP_TIMEZONE)
 
 # BIDV
 PAYMENT_INFO = {
@@ -122,7 +125,7 @@ async def gs_call(fn, *args, **kwargs):
         return await asyncio.to_thread(fn, *args, **kwargs)
 
 def now_dt() -> datetime:
-    return datetime.now()
+    return datetime.now(LOCAL_TZ).replace(tzinfo=None)
 
 def now_str() -> str:
     return now_dt().strftime("%Y-%m-%d %H:%M:%S")
@@ -182,7 +185,7 @@ def remaining_seconds(created_at: str, ttl_seconds: int) -> int:
     try:
         created = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
         expire_at = created + timedelta(seconds=ttl_seconds)
-        return int((expire_at - datetime.now()).total_seconds())
+        return int((expire_at - now_dt()).total_seconds())
     except Exception:
         return 0
 
@@ -739,6 +742,45 @@ def list_user_orders(user_id: int, limit: int = 10) -> List[Dict[str, str]]:
 
     rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return rows[:limit]
+
+
+def get_admin_snapshot(limit: int = 100) -> Dict[str, Any]:
+    init_sheets()
+    products = load_products()
+    stock_ready = stock_count_ready_by_code()
+    orders = get_all_records(_ws_orders)
+    orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+
+    status_counts: Dict[str, int] = {}
+    revenue = 0
+    for order in orders:
+        status = (order.get("status") or "UNKNOWN").strip().upper()
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status in ("PAID", "DELIVERED"):
+            revenue += normalize_int(order.get("total"), 0)
+
+    product_rows = []
+    for product in products:
+        stock_code = product.get("stock_code", "")
+        product_rows.append({
+            "product_id": product.get("product_id", ""),
+            "name": product.get("name", ""),
+            "stock_code": stock_code,
+            "price": product.get("price", 0),
+            "ready": stock_ready.get(stock_code, 0),
+        })
+
+    return {
+        "generated_at": now_str(),
+        "timezone": APP_TIMEZONE,
+        "summary": {
+            "orders": len(orders),
+            "revenue": revenue,
+            "status_counts": status_counts,
+        },
+        "products": product_rows,
+        "orders": orders[: max(1, min(int(limit or 100), 300))],
+    }
 
 # ================== FULFILLMENTS (optional) ==================
 def append_fulfillment(order_id: str, item_id: str, stock_code: str, secret: str, delivered_at: str) -> None:
@@ -1839,7 +1881,7 @@ async def restore_pending_jobs(app: Application):
 
         # thời gian còn lại
         expire_dt = created_dt + timedelta(seconds=ORDER_TTL_SECONDS)
-        remain = int((expire_dt - datetime.now()).total_seconds())
+        remain = int((expire_dt - now_dt()).total_seconds())
 
         # Nếu đã quá hạn -> trả kho + xoá QR + báo user (best effort)
         if remain <= 0:
