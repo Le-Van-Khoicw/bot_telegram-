@@ -451,9 +451,9 @@ def register_admin_routes(app: FastAPI) -> None:
         return {"ok": True}
 
     @app.get("/admin/api/snapshot")
-    async def admin_snapshot(request: Request, limit: int = 100):
+    async def admin_snapshot(request: Request, limit: int = 100, pool_limit: int = 2000):
         require_admin(request)
-        return await asyncio.to_thread(snapshot, limit)
+        return await asyncio.to_thread(snapshot, limit, pool_limit)
 
     @app.post("/admin/api/products")
     async def admin_save_product(request: Request):

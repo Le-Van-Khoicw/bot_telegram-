@@ -29,7 +29,7 @@ def _make_item_id(stock_code: str) -> str:
     return f"{stock_code.strip().upper()}-{shop.now_dt().strftime('%Y%m%d%H%M%S')}-{suffix}"
 
 
-def snapshot(limit: int = 100) -> Dict[str, Any]:
+def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
     shop.init_sheets()
     products = shop.load_products()
     pool = _records(shop._ws_pool)
@@ -40,6 +40,7 @@ def snapshot(limit: int = 100) -> Dict[str, Any]:
 
     orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     limit = max(1, min(int(limit or 100), 300))
+    pool_limit = max(1, min(int(pool_limit or 2000), 5000))
 
     status_counts: Dict[str, int] = {}
     revenue = 0
@@ -106,7 +107,7 @@ def snapshot(limit: int = 100) -> Dict[str, Any]:
         "products": product_rows,
         "orders": orders[:limit],
         "users": user_rows[:limit],
-        "pool": pool[:limit],
+        "pool": pool[:pool_limit],
         "reservations": reservations[:limit],
         "fulfillments": fulfillments[:limit],
     }

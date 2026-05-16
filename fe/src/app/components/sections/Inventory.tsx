@@ -27,7 +27,11 @@ export function Inventory({ data, adminKey, refresh }: Props) {
 
   const pool = data?.pool || [];
   const productCodes = useMemo(
-    () => Array.from(new Set((data?.products || []).map((p) => text(p.stock_code)).filter((x) => x !== "—"))),
+    () => {
+      const fromProducts = (data?.products || []).map((p) => text(p.stock_code));
+      const fromPool = (data?.pool || []).map((p) => text(p.stock_code));
+      return Array.from(new Set([...fromProducts, ...fromPool].filter((x) => x !== "—"))).sort();
+    },
     [data],
   );
   const counts = {

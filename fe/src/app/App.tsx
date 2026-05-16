@@ -105,7 +105,7 @@ export default function App() {
       setMessage("Đang tải dữ liệu...");
     }
     try {
-      const next = await adminApi<AdminSnapshot>("/admin/api/snapshot?limit=300", key);
+      const next = await adminApi<AdminSnapshot>("/admin/api/snapshot?limit=300&pool_limit=5000", key);
       notifyFromSnapshot(next);
       setData(next);
       setMessage(`Cập nhật lúc ${next.generated_at} (${next.timezone})`);
