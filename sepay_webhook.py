@@ -632,6 +632,14 @@ async def process_payment(payload: Dict[str, Any]) -> None:
     status = (order.get("status") or "PENDING").upper()
     if status in ("DELIVERED", "CANCELLED", "EXPIRED"):
         logger.info("Skip status=%s for %s", status, canonical_oid)
+        await notify_admins(
+            "⚠️ Có giao dịch vào đơn đã đóng\n"
+            f"Order: {canonical_oid}\n"
+            f"Trạng thái hiện tại: {status}\n"
+            f"Số tiền: {money_vnd(amount)}\n"
+            f"TX: {txn_id}\n"
+            f"Nội dung: {desc[:300]}"
+        )
         return
 
     created_at = (order.get("created_at") or "").strip()
@@ -658,6 +666,15 @@ async def process_payment(payload: Dict[str, Any]) -> None:
             except Exception:
                 pass
 
+        await notify_admins(
+            "⚠️ Có thanh toán nhưng đơn đã quá hạn\n"
+            f"Order: {canonical_oid}\n"
+            f"Khách: {user_id_s}\n"
+            f"Số tiền: {money_vnd(amount)}\n"
+            f"TX: {txn_id}\n"
+            f"Đã trả kho: {released} item\n"
+            f"TTL: {ORDER_TTL_SECONDS // 60} phút"
+        )
         return
 
     # ✅ FIX: chặn webhook retry / duplicate
@@ -686,11 +703,30 @@ async def process_payment(payload: Dict[str, Any]) -> None:
 
     if CHECK_AMOUNT and total_need and amount != total_need:
         logger.warning("Amount mismatch for %s: got=%s need=%s", canonical_oid, amount, total_need)
+        await notify_admins(
+            "⚠️ Có giao dịch sai số tiền\n"
+            f"Order: {canonical_oid}\n"
+            f"Khách: {user_id}\n"
+            f"Stock: {stock_code}\n"
+            f"Cần: {money_vnd(total_need)}\n"
+            f"Nhận: {money_vnd(amount)}\n"
+            f"TX: {txn_id}"
+        )
         return
 
     # 2) mark PAID (chỉ update rownum)
     paid_at = now_str()
     await gs_call(update_order_cells, rownum, {"status": "PAID", "paid_at": paid_at, "tx_id": txn_id})
+    await notify_admins(
+        "💰 Đã nhận thanh toán\n"
+        f"Order: {canonical_oid}\n"
+        f"Khách: {user_id}\n"
+        f"Stock: {stock_code}\n"
+        f"SL: {qty}\n"
+        f"Số tiền: {money_vnd(amount)}\n"
+        f"TX: {txn_id}\n"
+        "Đang giao hàng tự động..."
+    )
 
     # 3) take HELD -> SOLD and get secrets
     #    (Fix2: dùng canonical_oid; Fix1: pool function sẽ so bằng norm_oid)
