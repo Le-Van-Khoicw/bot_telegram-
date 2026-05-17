@@ -6,6 +6,10 @@ import random
 import string
 import asyncio
 import time
+import base64
+import hmac
+import hashlib
+import struct
 import urllib.request
 import json
 from telegram.constants import ChatAction, ParseMode
@@ -866,12 +870,15 @@ BTN_PRODUCTS = "🛍 Sản phẩm".replace("\ufe0f","")
 BTN_SUPPORT  = "💬 Hỗ trợ".replace("\ufe0f","")
 BTN_ORDERS   = "📦 Đơn hàng".replace("\ufe0f","")
 BTN_GAME     = "🎲 Game".replace("\ufe0f","")
+BTN_2FA      = "🔐 2FA".replace("\ufe0f","")
+BTN_MAIL     = "📬 Đọc mail".replace("\ufe0f","")
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     kb = [
         [KeyboardButton(BTN_PRODUCTS), KeyboardButton(BTN_SUPPORT)],
         [KeyboardButton(BTN_GAME), KeyboardButton(BTN_ORDERS)],
+        [KeyboardButton(BTN_2FA), KeyboardButton(BTN_MAIL)],
     ]
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
@@ -890,6 +897,7 @@ def welcome_text(user_fullname: str) -> str:
         "/orders - Đơn hàng của bạn\n\n"
         "/game - Chơi game\n\n"
         "/support - Hỗ trợ\n\n"
+        "/2fa - Lấy mã 2FA từ secret\n\n"
         f"🫡 “Mỗi đơn hàng bạn đặt tại {SHOP_NAME} không chỉ là một sản phẩm — đó là sự tin tưởng bạn gửi gắm, "
         "và là cam kết chúng tôi luôn giữ trọn.”\n\n"
     )
@@ -1061,6 +1069,99 @@ def normalize_menu_text(text: str) -> str:
     text = (text or "").replace("\ufe0f", "")
     text = re.sub(r"[^\wÀ-ỹ\s]", " ", text, flags=re.UNICODE)
     return " ".join(text.casefold().split())
+
+
+def extract_totp_secrets(raw: str) -> List[str]:
+    text = (raw or "").strip()
+    if not text:
+        return []
+
+    # Support otpauth://totp/...?...secret=XXXX links too.
+    uri_secrets = re.findall(r"(?:^|[?&])secret=([A-Za-z2-7=\s]+)", text, flags=re.IGNORECASE)
+    if uri_secrets:
+        return [s.strip() for s in uri_secrets if s.strip()]
+
+    secrets: List[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "|" in line:
+            parts = [p.strip() for p in line.split("|") if p.strip()]
+            line = parts[-1] if parts else line
+        candidate = re.sub(r"[^A-Za-z2-7=]", "", line).upper()
+        if len(candidate) >= 12 and re.fullmatch(r"[A-Z2-7=]+", candidate):
+            secrets.append(candidate)
+    return secrets
+
+
+def looks_like_totp_secret(text: str) -> bool:
+    if "@" in (text or "") or "|" in (text or ""):
+        return False
+    return bool(extract_totp_secrets(text))
+
+
+def generate_totp(secret: str, now: Optional[int] = None, step: int = 30, digits: int = 6) -> Tuple[str, int]:
+    clean = re.sub(r"[^A-Za-z2-7=]", "", secret or "").upper()
+    if not clean:
+        raise ValueError("Secret rỗng")
+    clean += "=" * ((8 - len(clean) % 8) % 8)
+    key = base64.b32decode(clean, casefold=True)
+    current = int(now if now is not None else time.time())
+    counter = current // step
+    msg = struct.pack(">Q", counter)
+    digest = hmac.new(key, msg, hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code_int = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    return str(code_int % (10 ** digits)).zfill(digits), step - (current % step)
+
+
+async def send_2fa_help(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "🔐 *LẤY MÃ 2FA*\n\n"
+            "Cách 1:\n"
+            "`/2fa SECRET`\n\n"
+            "Cách 2:\n"
+            "Gửi thẳng secret 2FA vào chat.\n\n"
+            "Cách 3:\n"
+            "Reply tin có secret rồi gõ `/2fa`.\n\n"
+            "Bot sẽ tạo mã 6 số hiện tại giống Google Authenticator."
+        ),
+        parse_mode="Markdown",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+async def send_2fa_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str):
+    secrets = extract_totp_secrets(raw)
+    if not secrets:
+        await send_2fa_help(update.effective_chat.id, context)
+        return
+
+    lines = ["🔐 *Mã 2FA hiện tại*"]
+    for idx, secret in enumerate(secrets[:10], start=1):
+        try:
+            code, remain = generate_totp(secret)
+            lines.append(f"\n{idx}) `{code}` - còn *{remain}s*")
+        except Exception:
+            lines.append(f"\n{idx}) Secret không hợp lệ")
+    if len(secrets) > 10:
+        lines.append(f"\n\nChỉ xử lý 10 secret đầu tiên. Còn {len(secrets) - 10} secret chưa hiển thị.")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=main_menu_keyboard())
+
+
+async def cmd_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    raw = " ".join(context.args).strip()
+    if not raw and update.message.reply_to_message:
+        raw = (update.message.reply_to_message.text or "").strip()
+
+    if not raw:
+        return await send_2fa_help(update.effective_chat.id, context)
+
+    return await send_2fa_from_text(update, context, raw)
 
 
 async def read_mail_from_text(update: Update, raw: str):
@@ -2097,6 +2198,8 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if looks_like_mail_account(text):
         return await read_mail_from_text(update, text)
+    if looks_like_totp_secret(text):
+        return await send_2fa_from_text(update, context, text)
 
     if text == BTN_PRODUCTS or "sản phẩm" in menu_text or "san pham" in menu_text:
         return await show_products(user.id, context)
@@ -2106,6 +2209,10 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_orders(user.id, context)
     if text == BTN_GAME or menu_text == "game":
         return await cmd_game(update, context)
+    if text == BTN_2FA or menu_text in {"2fa", "ma 2fa", "mã 2fa"}:
+        return await send_2fa_help(user.id, context)
+    if text == BTN_MAIL or "đọc mail" in menu_text or "doc mail" in menu_text:
+        return await send_mail_help(user.id, context)
 
     await update.message.reply_text("Bấm menu để sử dụng nhé.", reply_markup=main_menu_keyboard())
 
@@ -2246,6 +2353,8 @@ def configure_application(app: Application) -> Application:
     app.add_handler(CommandHandler("game", cmd_game))
     app.add_handler(CommandHandler("hangve", cmd_hangve))
     app.add_handler(CommandHandler("mail", cmd_mail))
+    app.add_handler(CommandHandler("2fa", cmd_2fa))
+    app.add_handler(CommandHandler("otp", cmd_2fa))
 
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
