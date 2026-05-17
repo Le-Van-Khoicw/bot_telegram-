@@ -9,7 +9,7 @@ from telegram import Update
 
 from admin_dashboard import register_admin_routes
 from bot_shop import build_application, main as start_bot_logic
-from sepay_webhook import process_payment, verify_sepay_auth
+from sepay_webhook import process_payment, set_telegram_bot, verify_sepay_auth
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MAIN_ORCHESTRATOR")
@@ -94,6 +94,7 @@ async def startup_telegram_webhook():
     webhook_url = f"{base_url}{telegram_webhook_path()}"
     telegram_app = build_application()
     await telegram_app.initialize()
+    set_telegram_bot(telegram_app.bot)
     await telegram_app.bot.set_webhook(webhook_url, drop_pending_updates=True)
     await telegram_app.start()
     logger.info("Telegram webhook is active: %s", webhook_url)

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent } from "../ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Button } from "../ui/button";
@@ -10,25 +10,35 @@ import { ClipboardList, Search } from "lucide-react";
 import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../api";
 
 type OrderStatus = "PENDING" | "PAID" | "DELIVERED" | "EXPIRED" | "CANCELLED";
+type OrderFilter = OrderStatus | "ALL" | "FAILED";
 
 interface Props {
   data: AdminSnapshot | null;
   adminKey: string;
   refresh: () => Promise<void>;
+  preset?: { status?: string; nonce: number };
 }
 
 const ALL_STATUSES: OrderStatus[] = ["PENDING", "PAID", "DELIVERED", "EXPIRED", "CANCELLED"];
 
-export function Orders({ data, adminKey, refresh }: Props) {
+export function Orders({ data, adminKey, refresh, preset }: Props) {
   const [search, setSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState<OrderStatus | "ALL">("ALL");
+  const [filterStatus, setFilterStatus] = useState<OrderFilter>("ALL");
   const [changeModal, setChangeModal] = useState<{ open: boolean; order: AnyRow | null }>({ open: false, order: null });
   const [newStatus, setNewStatus] = useState<OrderStatus>("DELIVERED");
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    if (!preset?.nonce) return;
+    const status = (preset.status || "ALL").toUpperCase() as OrderFilter;
+    setFilterStatus(status === "FAILED" || ALL_STATUSES.includes(status as OrderStatus) ? status : "ALL");
+  }, [preset?.nonce, preset?.status]);
+
   const orders = data?.orders || [];
   const visible = orders.filter((o) => {
-    if (filterStatus !== "ALL" && text(o.status).toUpperCase() !== filterStatus) return false;
+    const status = text(o.status).toUpperCase();
+    if (filterStatus === "FAILED" && !["EXPIRED", "CANCELLED"].includes(status)) return false;
+    if (filterStatus !== "ALL" && filterStatus !== "FAILED" && status !== filterStatus) return false;
     const hay = `${text(o.order_id)} ${text(o.user_id)} ${text(o.stock_code)}`.toLowerCase();
     return !search || hay.includes(search.toLowerCase());
   });
@@ -59,10 +69,11 @@ export function Orders({ data, adminKey, refresh }: Props) {
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-8 w-64" placeholder="Order ID / User ID / Code" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v as typeof filterStatus)}>
+        <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v as OrderFilter)}>
           <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">Tất cả</SelectItem>
+            <SelectItem value="FAILED">Lỗi / hủy</SelectItem>
             {ALL_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>

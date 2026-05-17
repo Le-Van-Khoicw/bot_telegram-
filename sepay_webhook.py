@@ -75,7 +75,7 @@ def kb_after_delivery() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("⬅️ Menu", callback_data="back_main")],
     ])
 
-ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "900"))  # 15 phút mặc định
+ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "300"))  # 5 phút mặc định
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
 LOCAL_TZ = ZoneInfo(APP_TIMEZONE)
 
@@ -90,6 +90,11 @@ ORDER_ID_REGEX = os.getenv(
 
 app = FastAPI(title="SePay Webhook AutoDeliver")
 tg_bot: Optional[Bot] = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
+
+
+def set_telegram_bot(bot: Bot) -> None:
+    global tg_bot
+    tg_bot = bot
 
 # =========================
 # GSheet globals

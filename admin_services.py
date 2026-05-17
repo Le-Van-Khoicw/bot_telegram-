@@ -40,7 +40,7 @@ def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
 
     orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     limit = max(1, min(int(limit or 100), 300))
-    pool_limit = max(1, min(int(pool_limit or 2000), 5000))
+    pool_limit = max(1, min(int(pool_limit or 2000), 30000))
 
     status_counts: Dict[str, int] = {}
     revenue = 0
@@ -92,6 +92,31 @@ def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
         user_rows.append(row)
     user_rows.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
 
+    delivery_rows = []
+    seen_delivery_orders = set()
+    for row in fulfillments:
+        delivery_rows.append(dict(row))
+        oid = (row.get("order_id") or "").strip()
+        if oid:
+            seen_delivery_orders.add(oid)
+
+    for order in orders:
+        oid = (order.get("order_id") or "").strip()
+        status = (order.get("status") or "").strip().upper()
+        if not oid or oid in seen_delivery_orders or status != "DELIVERED":
+            continue
+        delivery_rows.append({
+            "order_id": oid,
+            "item_id": "",
+            "stock_code": order.get("stock_code", ""),
+            "secret": order.get("deliver_text", ""),
+            "delivered_at": order.get("delivered_at", ""),
+            "user_id": order.get("user_id", ""),
+            "qty": order.get("qty", ""),
+        })
+
+    delivery_rows.sort(key=lambda x: x.get("delivered_at", ""), reverse=True)
+
     return {
         "generated_at": shop.now_str(),
         "timezone": shop.APP_TIMEZONE,
@@ -110,6 +135,7 @@ def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
         "pool": pool[:pool_limit],
         "reservations": reservations[:limit],
         "fulfillments": fulfillments[:limit],
+        "deliveries": delivery_rows[:limit],
     }
 
 

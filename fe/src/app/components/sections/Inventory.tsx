@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "../ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Button } from "../ui/button";
@@ -15,9 +15,10 @@ interface Props {
   data: AdminSnapshot | null;
   adminKey: string;
   refresh: () => Promise<void>;
+  preset?: { status?: string; stockCode?: string; nonce: number };
 }
 
-export function Inventory({ data, adminKey, refresh }: Props) {
+export function Inventory({ data, adminKey, refresh, preset }: Props) {
   const [addCode, setAddCode] = useState("");
   const [addData, setAddData] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
@@ -30,7 +31,7 @@ export function Inventory({ data, adminKey, refresh }: Props) {
     () => {
       const fromProducts = (data?.products || []).map((p) => text(p.stock_code));
       const fromPool = (data?.pool || []).map((p) => text(p.stock_code));
-      return Array.from(new Set([...fromProducts, ...fromPool].filter((x) => x !== "—"))).sort();
+      return Array.from(new Set([...fromProducts, ...fromPool].filter((x) => x !== "—" && x !== "â€”"))).sort();
     },
     [data],
   );
@@ -45,6 +46,14 @@ export function Inventory({ data, adminKey, refresh }: Props) {
     if (filterCode !== "ALL" && text(p.stock_code) !== filterCode) return false;
     return true;
   });
+
+  useEffect(() => {
+    if (!preset?.nonce) return;
+    const status = (preset.status || "ALL").toUpperCase();
+    setFilterStatus(["ALL", "READY", "HELD", "SOLD"].includes(status) ? status : "ALL");
+    setFilterCode(preset.stockCode || "ALL");
+    if (preset.stockCode) setAddCode(preset.stockCode);
+  }, [preset?.nonce, preset?.status, preset?.stockCode]);
 
   const addStock = async () => {
     setBusy(true);
@@ -166,6 +175,13 @@ export function Inventory({ data, adminKey, refresh }: Props) {
         <TabsContent value="add" className="space-y-3 pt-2">
           <Card className="shadow-sm max-w-2xl">
             <CardContent className="p-4 space-y-3">
+              <Select value={addCode || "__custom"} onValueChange={(value) => setAddCode(value === "__custom" ? "" : value)}>
+                <SelectTrigger><SelectValue placeholder="Chọn stock code có sẵn" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__custom">Nhập mã khác</SelectItem>
+                  {productCodes.map((code) => <SelectItem key={code} value={code}>{code}</SelectItem>)}
+                </SelectContent>
+              </Select>
               <Input placeholder="Stock code, ví dụ GPT1M" value={addCode} onChange={(e) => setAddCode(e.target.value.toUpperCase())} />
               <Textarea placeholder="Mỗi dòng là 1 account/secret" value={addData} onChange={(e) => setAddData(e.target.value)} />
               <Button className="gap-2" onClick={addStock} disabled={busy || !addCode || !addData.trim()}><Plus size={15} /> Thêm vào kho</Button>

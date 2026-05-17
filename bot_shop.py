@@ -74,7 +74,7 @@ def parse_admin_ids(raw: str) -> set[int]:
 
 ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", "6261937216"))
 
-ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "900"))  # 15 phút
+ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "300"))  # 5 phút
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
 LOCAL_TZ = ZoneInfo(APP_TIMEZONE)
 
@@ -110,6 +110,8 @@ _CACHE = {
     "products": {"ts": 0.0, "data": []},
     "stock": {"ts": 0.0, "data": {}},
 }
+
+LAST_MAIL_INPUT: Dict[int, str] = {}
 def _ts() -> float:
     return time.time()
 
@@ -936,6 +938,7 @@ def quick_actions_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🔐 2FA", callback_data="2fa_help"),
             InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help"),
         ],
+        [InlineKeyboardButton("🔄 Đọc lại thư", callback_data="mail_repeat")],
         [InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")],
     ])
 
@@ -1181,9 +1184,7 @@ async def cmd_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await send_2fa_from_text(update, context, raw)
 
 
-async def read_mail_from_text(update: Update, raw: str):
-    loading_msg = await update.message.reply_text("Đang đọc hòm thư...")
-
+async def render_mail_result(loading_msg, raw: str):
     try:
         result = await asyncio.to_thread(read_inbox_messages, raw, 1)
     except MailReaderError as e:
@@ -1242,6 +1243,26 @@ async def read_mail_from_text(update: Update, raw: str):
     )
 
 
+async def read_mail_from_text(update: Update, raw: str):
+    if update.effective_user:
+        LAST_MAIL_INPUT[update.effective_user.id] = raw
+    loading_msg = await update.message.reply_text("Đang đọc hòm thư...")
+    await render_mail_result(loading_msg, raw)
+
+
+async def read_mail_again(chat_id: int, user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    raw = LAST_MAIL_INPUT.get(user_id, "").strip()
+    if not raw:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Chưa có hòm thư gần nhất để đọc lại. Bạn gửi chuỗi mail hoặc dùng /mail trước nhé.",
+            reply_markup=quick_actions_kb(),
+        )
+        return
+    loading_msg = await context.bot.send_message(chat_id=chat_id, text="Đang đọc lại hòm thư...")
+    await render_mail_result(loading_msg, raw)
+
+
 async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw = " ".join(context.args).strip()
     if not raw and update.message.reply_to_message:
@@ -1252,6 +1273,7 @@ async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Dùng: `/mail email|refresh_token|client_id`\n"
             "Hoặc gửi thẳng chuỗi `email|refresh_token|client_id` vào chat.",
             parse_mode="Markdown",
+            reply_markup=quick_actions_kb(),
         )
         return
 
@@ -2005,6 +2027,59 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE, order
 async def bootstrap_job(context: ContextTypes.DEFAULT_TYPE):
     await restore_pending_jobs(context.application)
 
+
+async def release_overdue_pending_job(context: ContextTypes.DEFAULT_TYPE):
+    """Quét định kỳ để trả HELD nếu bot/Render bị restart làm mất job TTL."""
+    try:
+        pending = await gs_call(list_pending_orders)
+    except Exception as e:
+        logger.error("release_overdue_pending_job failed: %s", e)
+        return
+
+    expired_count = 0
+    released_total = 0
+    for order in pending:
+        order_id = (order.get("order_id") or "").strip()
+        user_id_s = (order.get("user_id") or "").strip()
+        created_at_s = (order.get("created_at") or "").strip()
+        qr_msg_id_s = (order.get("qr_msg_id") or "").strip()
+        created_dt = parse_dt(created_at_s)
+        if not order_id or not created_dt:
+            continue
+        if (created_dt + timedelta(seconds=ORDER_TTL_SECONDS)) > now_dt():
+            continue
+
+        released = await gs_call(release_hold_by_order, order_id, "EXPIRED")
+        expired_count += 1
+        released_total += released
+        remove_jobs_by_prefix(context.application, f"countdown_{order_id}")
+        remove_jobs_by_prefix(context.application, f"ttl_{order_id}")
+
+        if user_id_s.isdigit():
+            user_id = int(user_id_s)
+            if qr_msg_id_s.isdigit():
+                try:
+                    await context.bot.delete_message(chat_id=user_id, message_id=int(qr_msg_id_s))
+                except Exception:
+                    pass
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"⌛ Đơn `{order_id}` đã *hết hạn* nên hệ thống đã huỷ.\n"
+                        f"✅ Đã trả kho: *{released}* item.\n\n"
+                        "Bạn tạo đơn mới nếu vẫn muốn mua nhé."
+                    ),
+                    parse_mode="Markdown",
+                    reply_markup=main_menu_keyboard(),
+                )
+            except Exception:
+                pass
+
+    if expired_count:
+        logger.info("✅ Auto released overdue orders=%s items=%s", expired_count, released_total)
+
+
 async def restore_pending_jobs(app: Application):
     """Khôi phục TTL/Countdown cho các đơn PENDING khi bot vừa chạy lại."""
     if not app.job_queue:
@@ -2312,6 +2387,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return await send_mail_help(q.from_user.id, context)
 
+    if data == "mail_repeat":
+        await q.answer("Đang đọc lại thư...")
+        return await read_mail_again(q.message.chat_id, q.from_user.id, context)
+
     if data == "2fa_help":
         await q.answer()
         try:
@@ -2387,6 +2466,12 @@ def configure_application(app: Application) -> Application:
     else:
         # ✅ khôi phục TTL/Countdown cho các đơn PENDING sau restart
         app.job_queue.run_once(bootstrap_job, when=2, name="bootstrap_restore")
+        app.job_queue.run_repeating(
+            release_overdue_pending_job,
+            interval=60,
+            first=20,
+            name="release_overdue_pending",
+        )
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("shop", cmd_shop))

@@ -6,6 +6,7 @@ import { Sidebar, type AdminSection } from "./components/Sidebar";
 import { Overview } from "./components/sections/Overview";
 import { Products } from "./components/sections/Products";
 import { Inventory } from "./components/sections/Inventory";
+import { Materials } from "./components/sections/Materials";
 import { Orders } from "./components/sections/Orders";
 import { Users } from "./components/sections/Users";
 import { Reservations } from "./components/sections/Reservations";
@@ -22,6 +23,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [newCount, setNewCount] = useState(0);
+  const [inventoryPreset, setInventoryPreset] = useState<{ status?: string; stockCode?: string; nonce: number }>({ nonce: 0 });
+  const [orderPreset, setOrderPreset] = useState<{ status?: string; nonce: number }>({ nonce: 0 });
 
   const seenOrdersRef = useRef<Set<string>>(new Set());
   const deliveredRef = useRef<Set<string>>(new Set());
@@ -105,7 +108,7 @@ export default function App() {
       setMessage("Đang tải dữ liệu...");
     }
     try {
-      const next = await adminApi<AdminSnapshot>("/admin/api/snapshot?limit=300&pool_limit=5000", key);
+      const next = await adminApi<AdminSnapshot>("/admin/api/snapshot?limit=300&pool_limit=20000", key);
       notifyFromSnapshot(next);
       setData(next);
       setMessage(`Cập nhật lúc ${next.generated_at} (${next.timezone})`);
@@ -159,10 +162,24 @@ export default function App() {
   const common = { data, adminKey, refresh };
   const renderSection = () => {
     switch (section) {
-      case "overview": return <Overview data={data} />;
+      case "overview": return (
+        <Overview
+          data={data}
+          onOpenOrders={(status) => {
+            setOrderPreset({ status, nonce: Date.now() });
+            setSection("orders");
+          }}
+          onOpenInventory={(status, stockCode) => {
+            setInventoryPreset({ status, stockCode, nonce: Date.now() });
+            setSection("inventory");
+          }}
+          onOpenUsers={() => setSection("users")}
+        />
+      );
       case "products": return <Products {...common} />;
-      case "inventory": return <Inventory {...common} />;
-      case "orders": return <Orders {...common} />;
+      case "inventory": return <Inventory {...common} preset={inventoryPreset} />;
+      case "materials": return <Materials {...common} />;
+      case "orders": return <Orders {...common} preset={orderPreset} />;
       case "users": return <Users data={data} />;
       case "reservations": return <Reservations data={data} />;
       case "fulfillments": return <Fulfillments data={data} />;

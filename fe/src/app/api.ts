@@ -18,6 +18,7 @@ export interface AdminSnapshot {
   pool: AnyRow[];
   reservations: AnyRow[];
   fulfillments: AnyRow[];
+  deliveries?: AnyRow[];
 }
 
 export async function adminApi<T>(path: string, key: string, options: RequestInit = {}): Promise<T> {

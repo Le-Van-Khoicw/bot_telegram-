@@ -6,30 +6,33 @@ import { money, text, type AdminSnapshot } from "../../api";
 
 interface OverviewProps {
   data: AdminSnapshot | null;
+  onOpenOrders?: (status?: string) => void;
+  onOpenInventory?: (status?: string, stockCode?: string) => void;
+  onOpenUsers?: () => void;
 }
 
-export function Overview({ data }: OverviewProps) {
+export function Overview({ data, onOpenOrders, onOpenInventory, onOpenUsers }: OverviewProps) {
   if (!data) return <EmptyState />;
 
   const s = data.summary;
   const c = s.status_counts || {};
   const cards = [
-    { title: "Tổng đơn", value: s.orders, icon: <ShoppingCart size={20} />, color: "text-blue-600", bg: "bg-blue-50" },
-    { title: "Doanh thu", value: money(s.revenue), icon: <DollarSign size={20} />, color: "text-emerald-600", bg: "bg-emerald-50" },
-    { title: "PENDING", value: c.PENDING || 0, icon: <Clock size={20} />, color: "text-amber-600", bg: "bg-amber-50" },
-    { title: "DELIVERED", value: c.DELIVERED || 0, icon: <CheckCircle size={20} />, color: "text-green-600", bg: "bg-green-50" },
-    { title: "Lỗi / hủy", value: (c.EXPIRED || 0) + (c.CANCELLED || 0), icon: <XCircle size={20} />, color: "text-red-600", bg: "bg-red-50" },
-    { title: "Khách", value: s.users, icon: <Users size={20} />, color: "text-sky-600", bg: "bg-sky-50" },
-    { title: "READY", value: s.stock_ready, icon: <Warehouse size={20} />, color: "text-emerald-600", bg: "bg-emerald-50" },
-    { title: "HELD", value: s.stock_held, icon: <Clock size={20} />, color: "text-amber-600", bg: "bg-amber-50" },
-    { title: "SOLD", value: s.stock_sold, icon: <Package size={20} />, color: "text-indigo-600", bg: "bg-indigo-50" },
+    { title: "Tổng đơn", value: s.orders, icon: <ShoppingCart size={20} />, color: "text-blue-600", bg: "bg-blue-50", onClick: () => onOpenOrders?.() },
+    { title: "Doanh thu", value: money(s.revenue), icon: <DollarSign size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", onClick: () => onOpenOrders?.("DELIVERED") },
+    { title: "PENDING", value: c.PENDING || 0, icon: <Clock size={20} />, color: "text-amber-600", bg: "bg-amber-50", onClick: () => onOpenOrders?.("PENDING") },
+    { title: "DELIVERED", value: c.DELIVERED || 0, icon: <CheckCircle size={20} />, color: "text-green-600", bg: "bg-green-50", onClick: () => onOpenOrders?.("DELIVERED") },
+    { title: "Lỗi / hủy", value: (c.EXPIRED || 0) + (c.CANCELLED || 0), icon: <XCircle size={20} />, color: "text-red-600", bg: "bg-red-50", onClick: () => onOpenOrders?.("FAILED") },
+    { title: "Khách", value: s.users, icon: <Users size={20} />, color: "text-sky-600", bg: "bg-sky-50", onClick: () => onOpenUsers?.() },
+    { title: "READY", value: s.stock_ready, icon: <Warehouse size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", onClick: () => onOpenInventory?.("READY") },
+    { title: "HELD", value: s.stock_held, icon: <Clock size={20} />, color: "text-amber-600", bg: "bg-amber-50", onClick: () => onOpenInventory?.("HELD") },
+    { title: "SOLD", value: s.stock_sold, icon: <Package size={20} />, color: "text-indigo-600", bg: "bg-indigo-50", onClick: () => onOpenInventory?.("SOLD") },
   ];
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {cards.map((card) => (
-          <Card key={card.title} className="shadow-sm">
+          <Card key={card.title} onClick={card.onClick} className="shadow-sm cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md">
             <CardHeader className="pb-1 pt-4 px-4">
               <div className="flex items-center justify-between gap-2">
                 <CardTitle className="text-xs text-muted-foreground">{card.title}</CardTitle>
@@ -61,7 +64,7 @@ export function Overview({ data }: OverviewProps) {
               </TableHeader>
               <TableBody>
                 {data.products.map((p) => (
-                  <TableRow key={p.product_id || p.stock_code}>
+                  <TableRow key={p.product_id || p.stock_code} className="cursor-pointer" onClick={() => onOpenInventory?.("ALL", text(p.stock_code))}>
                     <TableCell className="font-medium">{text(p.name)}</TableCell>
                     <TableCell><code className="bg-muted px-1.5 py-0.5 rounded text-xs">{text(p.stock_code)}</code></TableCell>
                     <TableCell className="text-right text-emerald-700">{money(p.price)}</TableCell>

@@ -1,4 +1,4 @@
-import { LayoutDashboard, Package, Warehouse, ClipboardList, Users, BookMarked, Truck, LogOut, Menu, X } from "lucide-react";
+import { LayoutDashboard, Package, Warehouse, ClipboardList, Users, BookMarked, Truck, LogOut, Menu, X, ClipboardCheck } from "lucide-react";
 import { Button } from "./ui/button";
 import { type ReactNode, useState } from "react";
 
@@ -6,6 +6,7 @@ export type AdminSection =
   | "overview"
   | "products"
   | "inventory"
+  | "materials"
   | "orders"
   | "users"
   | "reservations"
@@ -15,6 +16,7 @@ const NAV_ITEMS: { id: AdminSection; label: string; icon: ReactNode }[] = [
   { id: "overview", label: "Tổng quan", icon: <LayoutDashboard size={18} /> },
   { id: "products", label: "Sản phẩm", icon: <Package size={18} /> },
   { id: "inventory", label: "Kho hàng", icon: <Warehouse size={18} /> },
+  { id: "materials", label: "Nguyên liệu", icon: <ClipboardCheck size={18} /> },
   { id: "orders", label: "Đơn hàng", icon: <ClipboardList size={18} /> },
   { id: "users", label: "Khách hàng", icon: <Users size={18} /> },
   { id: "reservations", label: "Giữ hàng", icon: <BookMarked size={18} /> },

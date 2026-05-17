@@ -11,7 +11,7 @@ interface Props {
 
 export function Fulfillments({ data }: Props) {
   const [search, setSearch] = useState("");
-  const rows = data?.fulfillments || [];
+  const rows = data?.deliveries || data?.fulfillments || [];
   const visible = rows.filter((f) => {
     const hay = `${text(f.order_id)} ${text(f.item_id)} ${text(f.stock_code)}`.toLowerCase();
     return !search || hay.includes(search.toLowerCase());
