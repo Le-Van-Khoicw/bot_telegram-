@@ -89,6 +89,11 @@ export function Materials({ data, adminKey, refresh }: Props) {
     toast.success(`Đã copy ${status === "OK" ? "dòng OK" : status === "BAD" ? "dòng lỗi" : "dòng mới"}`);
   };
 
+  const copyOne = async (value: string) => {
+    await navigator.clipboard.writeText(value);
+    toast.success("Đã copy 1 dòng");
+  };
+
   const addOkToStock = async () => {
     const okItems = items.filter((item) => item.status === "OK");
     if (!stockCode || !okItems.length) return;
@@ -116,18 +121,27 @@ export function Materials({ data, adminKey, refresh }: Props) {
               <TableRow>
                 <TableHead className="w-[90px]">Trạng thái</TableHead>
                 <TableHead>Nguyên liệu</TableHead>
-                <TableHead className="w-[220px] text-right">Thao tác</TableHead>
+                <TableHead className="w-[300px] text-right">Thao tác</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {visible.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell><StatusBadge status={item.status} /></TableCell>
-                  <TableCell className="font-mono text-xs max-w-[520px] truncate">{item.value}</TableCell>
-                  <TableCell className="text-right space-x-1">
-                    <Button size="sm" variant="outline" onClick={() => updateStatus(item.id, "OK")}>OK</Button>
-                    <Button size="sm" variant="outline" onClick={() => updateStatus(item.id, "BAD")}>Lỗi</Button>
-                    <Button size="sm" variant="ghost" onClick={() => updateStatus(item.id, "NEW")}><RotateCcw size={14} /></Button>
+                  <TableCell
+                    className="font-mono text-xs max-w-[520px] truncate cursor-pointer select-none active:bg-muted"
+                    title="Chạm để copy"
+                    onClick={() => copyOne(item.value)}
+                  >
+                    {item.value}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button size="sm" variant="outline" className="gap-1" onClick={() => copyOne(item.value)}><Copy size={14} /> Copy</Button>
+                      <Button size="sm" variant="outline" onClick={() => updateStatus(item.id, "OK")}>OK</Button>
+                      <Button size="sm" variant="outline" onClick={() => updateStatus(item.id, "BAD")}>Lỗi</Button>
+                      <Button size="sm" variant="ghost" onClick={() => updateStatus(item.id, "NEW")}><RotateCcw size={14} /></Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
