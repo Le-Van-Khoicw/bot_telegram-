@@ -160,8 +160,8 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visible.map((item) => (
-                    <TableRow key={text(item.item_id)}>
+                  {visible.map((item, index) => (
+                    <TableRow key={`${text(item.item_id)}-${normalizeCode(item.stock_code)}-${index}-${text(item.secret).slice(0, 24)}`}>
                       <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{text(item.item_id)}</code></TableCell>
                       <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{text(item.stock_code)}</code></TableCell>
                       <TableCell className="text-xs font-mono max-w-[260px] truncate">{text(item.secret)}</TableCell>
