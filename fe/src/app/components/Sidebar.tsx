@@ -12,7 +12,7 @@ export type AdminSection =
   | "reservations"
   | "fulfillments";
 
-const NAV_ITEMS: { id: AdminSection; label: string; icon: ReactNode }[] = [
+export const NAV_ITEMS: { id: AdminSection; label: string; icon: ReactNode }[] = [
   { id: "overview", label: "Tổng quan", icon: <LayoutDashboard size={18} /> },
   { id: "products", label: "Sản phẩm", icon: <Package size={18} /> },
   { id: "inventory", label: "Kho hàng", icon: <Warehouse size={18} /> },
@@ -39,7 +39,7 @@ export function Sidebar({ active, onChange, onLogout }: SidebarProps) {
         <p className="text-xs text-muted-foreground truncate">bot-telegram-1-mgsf</p>
       </div>
 
-      <div className="flex-1 py-3 space-y-0.5">
+      <div className="flex-1 py-3 space-y-0.5 overflow-y-auto">
         {NAV_ITEMS.map((item) => (
           <button
             key={item.id}
@@ -79,7 +79,7 @@ export function Sidebar({ active, onChange, onLogout }: SidebarProps) {
 
       {open && (
         <div className="md:hidden fixed inset-0 z-40 flex">
-          <div className="w-64 bg-white h-full shadow-xl">{navContent}</div>
+          <div className="w-[82vw] max-w-xs bg-white h-full shadow-xl">{navContent}</div>
           <div className="flex-1 bg-black/30" onClick={() => setOpen(false)} />
         </div>
       )}

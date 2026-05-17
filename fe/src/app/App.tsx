@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, RefreshCw } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { AdminLogin } from "./components/AdminLogin";
-import { Sidebar, type AdminSection } from "./components/Sidebar";
+import { NAV_ITEMS, Sidebar, type AdminSection } from "./components/Sidebar";
 import { Overview } from "./components/sections/Overview";
 import { Products } from "./components/sections/Products";
 import { Inventory } from "./components/sections/Inventory";
@@ -209,6 +209,20 @@ export default function App() {
                 Làm mới
               </Button>
             </div>
+          </div>
+          <div className="mb-4 md:hidden">
+            <select
+              className="w-full h-11 rounded-md border border-border bg-white px-3 text-sm font-medium shadow-sm"
+              value={section}
+              onChange={(event) => {
+                setSection(event.target.value as AdminSection);
+                setNewCount(0);
+              }}
+            >
+              {NAV_ITEMS.map((item) => (
+                <option key={item.id} value={item.id}>{item.label}</option>
+              ))}
+            </select>
           </div>
           {renderSection()}
         </div>
