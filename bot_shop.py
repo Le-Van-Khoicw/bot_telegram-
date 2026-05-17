@@ -925,6 +925,20 @@ def support_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")],
     ])
 
+
+def quick_actions_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🛍 Sản phẩm", callback_data="go_products"),
+            InlineKeyboardButton("📦 Đơn hàng", callback_data="go_orders"),
+        ],
+        [
+            InlineKeyboardButton("🔐 2FA", callback_data="2fa_help"),
+            InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help"),
+        ],
+        [InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")],
+    ])
+
 async def send_support(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         chat_id=chat_id,
@@ -956,7 +970,10 @@ def build_products_menu_kb(
         InlineKeyboardButton("💬 Hỗ trợ", callback_data="go_support"),
     ])
 
-    buttons.append([InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help")])
+    buttons.append([
+        InlineKeyboardButton("🔐 2FA", callback_data="2fa_help"),
+        InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help"),
+    ])
 
     # Menu chính
     buttons.append([InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")])
@@ -1130,7 +1147,7 @@ async def send_2fa_help(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
             "Bot sẽ tạo mã 6 số hiện tại giống Google Authenticator."
         ),
         parse_mode="Markdown",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=quick_actions_kb(),
     )
 
 
@@ -1150,7 +1167,7 @@ async def send_2fa_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if len(secrets) > 10:
         lines.append(f"\n\nChỉ xử lý 10 secret đầu tiên. Còn {len(secrets) - 10} secret chưa hiển thị.")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=main_menu_keyboard())
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=quick_actions_kb())
 
 
 async def cmd_2fa(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1170,17 +1187,21 @@ async def read_mail_from_text(update: Update, raw: str):
     try:
         result = await asyncio.to_thread(read_inbox_messages, raw, 1)
     except MailReaderError as e:
-        await loading_msg.edit_text(f"Không đọc được mail:\n{e}")
+        await loading_msg.edit_text(f"Không đọc được mail:\n{e}", reply_markup=quick_actions_kb())
         return
     except Exception as e:
         logger.exception("cmd_mail failed")
-        await loading_msg.edit_text(f"Lỗi không xác định khi đọc mail:\n{e}")
+        await loading_msg.edit_text(f"Lỗi không xác định khi đọc mail:\n{e}", reply_markup=quick_actions_kb())
         return
 
     email = escape_markdown(result.get("email", ""), version=2)
     messages = result.get("messages") or []
     if not messages:
-        await loading_msg.edit_text(f"Không thấy mail nào trong inbox của `{email}`.", parse_mode="MarkdownV2")
+        await loading_msg.edit_text(
+            f"Không thấy mail nào trong inbox của `{email}`.",
+            parse_mode="MarkdownV2",
+            reply_markup=quick_actions_kb(),
+        )
         return
 
     lines = [f"*Inbox:* `{email}`"]
@@ -1213,7 +1234,12 @@ async def read_mail_from_text(update: Update, raw: str):
     if len(text) > 3900:
         text = text[:3900] + "\n..."
 
-    await loading_msg.edit_text(text, parse_mode="MarkdownV2", disable_web_page_preview=True)
+    await loading_msg.edit_text(
+        text,
+        parse_mode="MarkdownV2",
+        disable_web_page_preview=True,
+        reply_markup=quick_actions_kb(),
+    )
 
 
 async def cmd_mail(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1246,7 +1272,7 @@ async def send_mail_help(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
             "Bot sẽ đọc mail mới nhất và tự bắt mã số nếu có."
         ),
         parse_mode="Markdown",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=quick_actions_kb(),
     )
 
 # ================== PRODUCTS FLOW ==================
@@ -2254,6 +2280,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = (q.data or "").strip()
 
     # ✅ NÚT NHANH: Đơn hàng / Hỗ trợ
+    if data == "go_products":
+        await q.answer()
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        return await show_products(q.from_user.id, context)
+
     if data == "go_orders":
         await q.answer()
         try:
@@ -2277,6 +2311,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         return await send_mail_help(q.from_user.id, context)
+
+    if data == "2fa_help":
+        await q.answer()
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        return await send_2fa_help(q.from_user.id, context)
 
     if data == "back_main":
         await q.answer()
