@@ -18,6 +18,9 @@ interface Props {
   preset?: { status?: string; stockCode?: string; nonce: number };
 }
 
+const normalizeCode = (value: any) => text(value).trim().toUpperCase();
+const isRealCode = (value: string) => value !== "—" && value !== "â€”";
+
 export function Inventory({ data, adminKey, refresh, preset }: Props) {
   const [addCode, setAddCode] = useState("");
   const [addData, setAddData] = useState("");
@@ -29,9 +32,9 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
   const pool = data?.pool || [];
   const productCodes = useMemo(
     () => {
-      const fromProducts = (data?.products || []).map((p) => text(p.stock_code));
-      const fromPool = (data?.pool || []).map((p) => text(p.stock_code));
-      return Array.from(new Set([...fromProducts, ...fromPool].filter((x) => x !== "—" && x !== "â€”"))).sort();
+      const fromProducts = (data?.products || []).map((p) => normalizeCode(p.stock_code));
+      const fromPool = (data?.pool || []).map((p) => normalizeCode(p.stock_code));
+      return Array.from(new Set([...fromProducts, ...fromPool].filter(isRealCode))).sort();
     },
     [data],
   );
@@ -43,7 +46,7 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
 
   const visible = pool.filter((p) => {
     if (filterStatus !== "ALL" && text(p.status).toUpperCase() !== filterStatus) return false;
-    if (filterCode !== "ALL" && text(p.stock_code) !== filterCode) return false;
+    if (filterCode !== "ALL" && normalizeCode(p.stock_code) !== normalizeCode(filterCode)) return false;
     return true;
   });
 
@@ -51,8 +54,8 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
     if (!preset?.nonce) return;
     const status = (preset.status || "ALL").toUpperCase();
     setFilterStatus(["ALL", "READY", "HELD", "SOLD"].includes(status) ? status : "ALL");
-    setFilterCode(preset.stockCode || "ALL");
-    if (preset.stockCode) setAddCode(preset.stockCode);
+    setFilterCode(preset.stockCode ? normalizeCode(preset.stockCode) : "ALL");
+    if (preset.stockCode) setAddCode(normalizeCode(preset.stockCode));
   }, [preset?.nonce, preset?.status, preset?.stockCode]);
 
   const addStock = async () => {
@@ -137,6 +140,9 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                 {productCodes.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
               </SelectContent>
             </Select>
+            <Badge variant="outline" className="h-9 px-3">
+              Đang hiện {visible.length}/{pool.length}
+            </Badge>
           </div>
 
           <Card className="shadow-sm">
