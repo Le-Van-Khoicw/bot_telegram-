@@ -6,6 +6,9 @@ from gspread.cell import Cell
 
 import bot_shop as shop
 
+MATERIALS_TAB = "MATERIALS"
+MATERIALS_HEADERS = ["id", "value", "status", "note", "created_at", "updated_at"]
+
 
 def _records(ws) -> List[Dict[str, str]]:
     return shop.get_all_records(ws) if ws else []
@@ -29,6 +32,61 @@ def _make_item_id(stock_code: str) -> str:
     return f"{stock_code.strip().upper()}-{shop.now_dt().strftime('%Y%m%d%H%M%S')}-{suffix}"
 
 
+def _materials_ws():
+    shop.init_sheets()
+    try:
+        ws = shop._gs_sheet.worksheet(MATERIALS_TAB)
+    except Exception:
+        ws = shop._gs_sheet.add_worksheet(title=MATERIALS_TAB, rows=1000, cols=len(MATERIALS_HEADERS))
+        ws.update("A1:F1", [MATERIALS_HEADERS], value_input_option="USER_ENTERED")
+        return ws
+
+    headers = [str(h).strip().lower() for h in ws.row_values(1)]
+    if headers != MATERIALS_HEADERS:
+        ws.update("A1:F1", [MATERIALS_HEADERS], value_input_option="USER_ENTERED")
+    return ws
+
+
+def load_materials() -> List[Dict[str, str]]:
+    rows = _records(_materials_ws())
+    rows.sort(key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True)
+    return rows
+
+
+def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
+    ws = _materials_ws()
+    raw_items = data.get("items") or []
+    if not isinstance(raw_items, list):
+        raise ValueError("items must be a list")
+
+    now = shop.now_str()
+    rows = [MATERIALS_HEADERS]
+    seen = set()
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        value = str(raw.get("value") or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        status = str(raw.get("status") or "NEW").strip().upper()
+        if status not in ("NEW", "OK", "BAD"):
+            status = "NEW"
+        item_id = str(raw.get("id") or "").strip() or f"MAT-{shop.now_dt().strftime('%Y%m%d%H%M%S')}-{len(rows)}"
+        rows.append([
+            item_id,
+            value,
+            status,
+            str(raw.get("note") or ""),
+            str(raw.get("created_at") or now),
+            now,
+        ])
+
+    ws.clear()
+    ws.update(f"A1:F{len(rows)}", rows, value_input_option="USER_ENTERED")
+    return {"ok": True, "saved": len(rows) - 1, "items": load_materials()}
+
+
 def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
     shop.init_sheets()
     products = shop.load_products()
@@ -37,6 +95,7 @@ def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
     users = _records(shop._ws_users)
     reservations = _records(shop._ws_res)
     fulfillments = _records(shop._ws_ful)
+    materials = load_materials()
 
     orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     limit = max(1, min(int(limit or 100), 300))
@@ -136,6 +195,7 @@ def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
         "reservations": reservations[:limit],
         "fulfillments": fulfillments[:limit],
         "deliveries": delivery_rows[:limit],
+        "materials": materials[:pool_limit],
     }
 
 

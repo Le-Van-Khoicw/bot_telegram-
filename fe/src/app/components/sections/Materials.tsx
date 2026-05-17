@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Clipboard, Copy, PackageCheck, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi, text, type AdminSnapshot } from "../../api";
@@ -38,11 +38,26 @@ function saveItems(items: MaterialItem[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
+function normalizeItems(rows: any[]): MaterialItem[] {
+  return (rows || [])
+    .map((row) => {
+      const status = String(row.status || "NEW").toUpperCase();
+      return {
+        id: String(row.id || makeId()),
+        value: String(row.value || "").trim(),
+        status: (status === "OK" || status === "BAD" ? status : "NEW") as MaterialStatus,
+        note: row.note ? String(row.note) : undefined,
+      };
+    })
+    .filter((item) => item.value);
+}
+
 export function Materials({ data, adminKey, refresh }: Props) {
   const [raw, setRaw] = useState("");
   const [stockCode, setStockCode] = useState("");
   const [items, setItems] = useState<MaterialItem[]>(loadItems);
   const [busy, setBusy] = useState(false);
+  const [loadedRemote, setLoadedRemote] = useState(false);
 
   const productCodes = useMemo(() => {
     const codes = (data?.products || []).map((p) => text(p.stock_code)).filter((x) => x !== "—");
@@ -55,9 +70,48 @@ export function Materials({ data, adminKey, refresh }: Props) {
     BAD: items.filter((x) => x.status === "BAD").length,
   }), [items]);
 
+  const saveRemote = useCallback(async (next: MaterialItem[]) => {
+    try {
+      const result = await adminApi<{ items?: any[] }>("/admin/api/materials", adminKey, {
+        method: "POST",
+        body: JSON.stringify({ items: next }),
+      });
+      if (result.items) {
+        const synced = normalizeItems(result.items);
+        setItems(synced);
+        saveItems(synced);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không lưu được nguyên liệu lên server");
+    }
+  }, [adminKey]);
+
+  useEffect(() => {
+    if (!data) return;
+    const remoteItems = normalizeItems(data.materials || []);
+    if (remoteItems.length > 0) {
+      setItems(remoteItems);
+      saveItems(remoteItems);
+      setLoadedRemote(true);
+      return;
+    }
+
+    if (!loadedRemote && items.length > 0) {
+      setLoadedRemote(true);
+      void saveRemote(items);
+      return;
+    }
+
+    setItems(remoteItems);
+    saveItems(remoteItems);
+    setLoadedRemote(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.generated_at, saveRemote]);
+
   const setAndSave = (next: MaterialItem[]) => {
     setItems(next);
     saveItems(next);
+    void saveRemote(next);
   };
 
   const importRaw = () => {
@@ -103,7 +157,10 @@ export function Materials({ data, adminKey, refresh }: Props) {
         method: "POST",
         body: JSON.stringify({ stock_code: stockCode, items: okItems.map((item) => item.value).join("\n") }),
       });
-      setAndSave(items.filter((item) => item.status !== "OK"));
+      const next = items.filter((item) => item.status !== "OK");
+      setItems(next);
+      saveItems(next);
+      await saveRemote(next);
       toast.success(`Đã thêm ${okItems.length} dòng OK vào kho ${stockCode}`);
       await refresh();
     } finally {
