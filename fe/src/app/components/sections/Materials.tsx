@@ -59,6 +59,13 @@ function normalizeItems(rows: any[]): MaterialItem[] {
     .filter((item) => item.value);
 }
 
+function mergeItems(localItems: MaterialItem[], remoteItems: MaterialItem[]): MaterialItem[] {
+  const byValue = new Map<string, MaterialItem>();
+  remoteItems.forEach((item) => byValue.set(item.value, item));
+  localItems.forEach((item) => byValue.set(item.value, item));
+  return Array.from(byValue.values());
+}
+
 export function Materials({ data, adminKey, refresh }: Props) {
   const [raw, setRaw] = useState("");
   const [stockCode, setStockCode] = useState("");
@@ -91,8 +98,9 @@ export function Materials({ data, adminKey, refresh }: Props) {
       if (result.items) {
         const synced = normalizeItems(result.items);
         if (synced.length > 0 || next.length === 0) {
-          setItems(synced);
-          saveItems(synced);
+          const merged = next.length === 0 ? synced : mergeItems(loadItems(), synced);
+          setItems(merged);
+          saveItems(merged);
         }
       }
       pendingSaveRef.current = null;
@@ -133,8 +141,9 @@ export function Materials({ data, adminKey, refresh }: Props) {
     if (!data) return;
     const remoteItems = normalizeItems(data.materials || []);
     if (remoteItems.length > 0) {
-      setItems(remoteItems);
-      saveItems(remoteItems);
+      const merged = mergeItems(loadItems(), remoteItems);
+      setItems(merged);
+      saveItems(merged);
       setLoadedRemote(true);
       return;
     }

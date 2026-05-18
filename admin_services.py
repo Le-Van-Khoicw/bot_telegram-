@@ -34,7 +34,7 @@ def _make_item_id(stock_code: str) -> str:
     return f"{stock_code.strip().upper()}-{shop.now_dt().strftime('%Y%m%d%H%M%S')}-{suffix}"
 
 
-def _materials_ws():
+def _materials_ws(update_header: bool = True):
     shop.init_sheets()
     try:
         ws = shop._gs_sheet.worksheet(MATERIALS_TAB)
@@ -49,13 +49,13 @@ def _materials_ws():
         return ws
 
     headers = [str(h).strip().lower() for h in ws.row_values(1)]
-    if headers != MATERIALS_HEADERS:
+    if update_header and headers != MATERIALS_HEADERS:
         ws.update("A1:F1", [MATERIALS_HEADERS], value_input_option="USER_ENTERED")
     return ws
 
 
 def load_materials() -> List[Dict[str, str]]:
-    rows = _records(_materials_ws())
+    rows = _records(_materials_ws(update_header=False))
     rows.sort(key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True)
     return rows
 
@@ -66,7 +66,7 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(raw_items, list):
         raise ValueError("items must be a list")
     force_clear = bool(data.get("force_clear"))
-    existing_items = _records(ws)
+    existing_items = _records(ws) if not raw_items else []
 
     now = shop.now_str()
     rows = [MATERIALS_HEADERS]
@@ -106,7 +106,11 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
         logger.exception("save_materials failed: rows=%s force_clear=%s", len(rows) - 1, force_clear)
         raise RuntimeError(f"Không lưu được MATERIALS: {exc}") from exc
 
-    return {"ok": True, "saved": len(rows) - 1, "items": load_materials()}
+    items = [
+        dict(zip(MATERIALS_HEADERS, row))
+        for row in rows[1:]
+    ]
+    return {"ok": True, "saved": len(rows) - 1, "items": items}
 
 
 def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
@@ -117,7 +121,11 @@ def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
     users = _records(shop._ws_users)
     reservations = _records(shop._ws_res)
     fulfillments = _records(shop._ws_ful)
-    materials = load_materials()
+    try:
+        materials = load_materials()
+    except Exception as exc:
+        logger.warning("load MATERIALS failed during snapshot: %s", exc)
+        materials = []
 
     orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     limit = max(1, min(int(limit or 100), 300))
