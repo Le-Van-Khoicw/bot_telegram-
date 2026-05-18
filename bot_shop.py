@@ -74,7 +74,7 @@ def parse_admin_ids(raw: str) -> set[int]:
 
 ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", "6261937216"))
 
-ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "300"))  # 5 phút
+ORDER_TTL_SECONDS = min(int(os.getenv("ORDER_TTL_SECONDS", "300")), 300)  # tối đa 5 phút
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
 LOCAL_TZ = ZoneInfo(APP_TIMEZONE)
 
@@ -676,6 +676,62 @@ def release_hold_by_order(order_id: str, mark_status: str) -> int:
 
     set_order_fields(order_id, {"status": mark_status})
     invalidate_stock_cache()
+    return released
+
+
+def release_expired_held_items_from_pool() -> int:
+    """Trả READY các item HELD đã quá hạn, kể cả khi order/job bị kẹt."""
+    init_sheets()
+
+    pool_vals = _ws_pool.get_all_values()
+    if not pool_vals or len(pool_vals) < 2:
+        return 0
+
+    ph = {str(h).strip().lower(): i for i, h in enumerate(pool_vals[0], start=1)}
+    c_status = ph.get("status")
+    c_hold_oid = ph.get("hold_order_id")
+    c_hold_at = ph.get("hold_at")
+    c_hold_exp = ph.get("hold_expires_at")
+    if not c_status:
+        return 0
+
+    now = now_dt()
+    cells: List[Cell] = []
+    released = 0
+
+    for rownum in range(2, len(pool_vals) + 1):
+        row = pool_vals[rownum - 1]
+        st = row[c_status - 1].strip().upper() if c_status - 1 < len(row) else ""
+        if st != "HELD":
+            continue
+
+        expired = False
+        if c_hold_exp:
+            exp_s = row[c_hold_exp - 1].strip() if c_hold_exp - 1 < len(row) else ""
+            exp_dt = parse_dt(exp_s)
+            expired = bool(exp_dt and exp_dt <= now)
+
+        if not expired and c_hold_at:
+            hold_s = row[c_hold_at - 1].strip() if c_hold_at - 1 < len(row) else ""
+            hold_dt = parse_dt(hold_s)
+            expired = bool(hold_dt and (hold_dt + timedelta(seconds=ORDER_TTL_SECONDS)) <= now)
+
+        if not expired:
+            continue
+
+        cells.append(Cell(rownum, c_status, "READY"))
+        if c_hold_oid:
+            cells.append(Cell(rownum, c_hold_oid, ""))
+        if c_hold_at:
+            cells.append(Cell(rownum, c_hold_at, ""))
+        if c_hold_exp:
+            cells.append(Cell(rownum, c_hold_exp, ""))
+        released += 1
+
+    if cells:
+        _ws_pool.update_cells(cells, value_input_option="USER_ENTERED")
+        invalidate_stock_cache()
+
     return released
 
 def mark_sold_and_get_secrets(order_id: str) -> List[Dict[str, str]]:
@@ -2155,6 +2211,13 @@ async def bootstrap_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def release_overdue_pending_job(context: ContextTypes.DEFAULT_TYPE):
     """Quét định kỳ để trả HELD nếu bot/Render bị restart làm mất job TTL."""
+    try:
+        orphan_released = await gs_call(release_expired_held_items_from_pool)
+        if orphan_released:
+            logger.info("✅ Auto released expired HELD items from pool=%s", orphan_released)
+    except Exception as e:
+        logger.error("release_expired_held_items_from_pool failed: %s", e)
+
     try:
         pending = await gs_call(list_pending_orders)
     except Exception as e:
