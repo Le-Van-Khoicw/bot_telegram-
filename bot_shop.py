@@ -207,7 +207,7 @@ def build_vietqr_image_url(order_id: str, amount: int) -> str:
     # ✅ ép nội dung CK về dạng sạch: bỏ '-' và mọi ký tự lạ
     add_info = normalize_order_ref(raw_note)
 
-    bank = PAYMENT_INFO["bank_code"].strip()
+    bank = PAYMENT_INFO["bank_code"].strip().upper()
     acc  = PAYMENT_INFO["bank_number"].strip()
     name = PAYMENT_INFO["bank_owner"].strip()
 
@@ -217,6 +217,17 @@ def build_vietqr_image_url(order_id: str, amount: int) -> str:
         f"&addInfo={quote(add_info)}"
         f"&accountName={quote(name)}"
     )
+
+
+def checkout_keyboard_pending_with_qr(order_id: str, qr_url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔗 Mở QR thanh toán", url=qr_url)],
+        [
+            InlineKeyboardButton("✅ Xác nhận đã thanh toán", callback_data=f"confirm|{order_id}"),
+            InlineKeyboardButton("❌ Huỷ đơn", callback_data=f"cancel|{order_id}"),
+        ],
+        [InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")],
+    ])
 
 
 async def fetch_qr_bytes(url: str, timeout: int = 12) -> Optional[bytes]:
@@ -1733,9 +1744,9 @@ async def checkout_flow(
         logger.error("❌ send_photo failed for %s | qr_url=%s | err=%s", order_id, qr_url, e)
         m = await context.bot.send_message(
             chat_id=user_id,
-            text=caption,
+            text=caption + "\n\n🔗 Nếu ảnh QR không hiện, bấm nút *Mở QR thanh toán* bên dưới.",
             parse_mode="Markdown",
-            reply_markup=checkout_keyboard_pending(order_id),
+            reply_markup=checkout_keyboard_pending_with_qr(order_id, qr_url),
             disable_web_page_preview=True,
         )
         qr_msg_id = str(m.message_id)
