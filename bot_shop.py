@@ -270,13 +270,14 @@ def build_checkout_caption_with_countdown(
     remain_text = format_countdown(remain_seconds)
     bank_acc = PAYMENT_INFO["bank_number"]
     bank_code = PAYMENT_INFO["bank_code"].upper()
+    safe_product_name = escape_markdown(str(product_name), version=1)
 
     pay_note = normalize_order_ref(order_id) # hàm của bạn đã bỏ ký tự lạ
 
     return (
         f"{status_line}\n\n"
         f"🧾 Mã đơn: `{order_id}`\n"
-        f"📦 SP: *{product_name}* — {fmt_price(unit_price)}\n"
+        f"📦 SP: *{safe_product_name}* — {fmt_price(unit_price)}\n"
         f"🔢 SL: *{qty}*\n"
         f"💰 Tổng: *{fmt_price(total)}*\n\n"
         f"⏳ *Hết hạn sau:* `{remain_text}`\n\n"
@@ -1484,10 +1485,26 @@ async def qty_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: st
         await q.answer()
     except Exception:
         pass
-    p = await gs_call(find_product_by_id, pid)
-    if not p:
-        return await q.edit_message_text("❌ Không tìm thấy sản phẩm.")
-    await checkout_flow(q.from_user.id, p, qty, context, edit_query=q)
+    try:
+        p = await gs_call(find_product_by_id, pid)
+        if not p:
+            return await q.edit_message_text("❌ Không tìm thấy sản phẩm.")
+        ok = await checkout_flow(q.from_user.id, p, qty, context, edit_query=q)
+        if not ok:
+            return
+    except Exception as e:
+        logger.exception("checkout from qty button failed pid=%s qty=%s user=%s", pid, qty, q.from_user.id)
+        try:
+            await context.bot.send_message(
+                chat_id=q.from_user.id,
+                text=(
+                    "❌ Lỗi khi tạo đơn.\n"
+                    "Bạn thử bấm mua lại giúp mình. Nếu vẫn lỗi, gửi admin ảnh màn hình này nhé."
+                ),
+                reply_markup=main_menu_keyboard(),
+            )
+        except Exception:
+            logger.warning("failed to notify user after checkout error: %s", e)
 
 # ================== JOBS ==================
 def remove_jobs_by_prefix(app: Application, prefix: str):
@@ -1742,13 +1759,35 @@ async def checkout_flow(
 
     except Exception as e:
         logger.error("❌ send_photo failed for %s | qr_url=%s | err=%s", order_id, qr_url, e)
-        m = await context.bot.send_message(
-            chat_id=user_id,
-            text=caption + "\n\n🔗 Nếu ảnh QR không hiện, bấm nút *Mở QR thanh toán* bên dưới.",
-            parse_mode="Markdown",
-            reply_markup=checkout_keyboard_pending_with_qr(order_id, qr_url),
-            disable_web_page_preview=True,
-        )
+        try:
+            m = await context.bot.send_message(
+                chat_id=user_id,
+                text=caption + "\n\n🔗 Nếu ảnh QR không hiện, bấm nút *Mở QR thanh toán* bên dưới.",
+                parse_mode="Markdown",
+                reply_markup=checkout_keyboard_pending_with_qr(order_id, qr_url),
+                disable_web_page_preview=True,
+            )
+        except Exception as msg_err:
+            logger.error("❌ send fallback checkout text failed for %s | err=%s", order_id, msg_err)
+            plain_text = (
+                "⏳ ĐANG CHỜ THANH TOÁN\n\n"
+                f"🧾 Mã đơn: {order_id}\n"
+                f"📦 SP: {product['name']} - {fmt_price(int(product['price']))}\n"
+                f"🔢 SL: {qty}\n"
+                f"💰 Tổng: {fmt_price(total)}\n\n"
+                f"⏳ Hết hạn sau: {format_countdown(ORDER_TTL_SECONDS)}\n\n"
+                "📌 Thanh toán:\n"
+                f"• STK: {PAYMENT_INFO['bank_number']}\n"
+                f"• Bank: {PAYMENT_INFO['bank_code'].upper()}\n"
+                f"• Nội dung CK: {normalize_order_ref(order_id)}\n\n"
+                "🔗 Nếu ảnh QR không hiện, bấm nút Mở QR thanh toán bên dưới."
+            )
+            m = await context.bot.send_message(
+                chat_id=user_id,
+                text=plain_text,
+                reply_markup=checkout_keyboard_pending_with_qr(order_id, qr_url),
+                disable_web_page_preview=True,
+            )
         qr_msg_id = str(m.message_id)
         await gs_call(set_order_fields, order_id, {"qr_msg_id": qr_msg_id})
 
@@ -2573,6 +2612,26 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await q.answer()
 
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.error:
+        logger.error(
+            "Unhandled telegram error",
+            exc_info=(type(context.error), context.error, context.error.__traceback__),
+        )
+    else:
+        logger.error("Unhandled telegram error without exception object")
+    try:
+        if isinstance(update, Update) and update.effective_chat:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="❌ Bot vừa gặp lỗi xử lý. Bạn thử lại giúp mình nhé.",
+                reply_markup=main_menu_keyboard(),
+            )
+    except Exception:
+        logger.exception("failed to send generic error message")
+
+
 def configure_application(app: Application) -> Application:
     if not app.job_queue:
         logger.warning("⚠️ JobQueue not available. Install: pip install python-telegram-bot[job-queue]")
@@ -2598,6 +2657,7 @@ def configure_application(app: Application) -> Application:
 
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
+    app.add_error_handler(error_handler)
     return app
 
 
