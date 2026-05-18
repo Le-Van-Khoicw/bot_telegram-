@@ -1040,19 +1040,37 @@ def qty_select_text(p: Dict[str, Any]) -> str:
         "👇 Chọn nhanh bên dưới hoặc nhập tuỳ chỉnh:"
     )
 
-def qty_select_kb(pid: str) -> InlineKeyboardMarkup:
-    # ✅ FIX: Use short session ID instead of long callback_data to avoid 64-byte limit
+def qty_callback(pid: str, qty: int) -> str:
+    data = f"qtypid|{pid}|{qty}"
+    if len(data.encode("utf-8")) <= 64:
+        return data
+
     import uuid
-    cleanup_expired_sessions()  # Clean up old sessions to prevent memory bloat
+    cleanup_expired_sessions()
     session_id = str(uuid.uuid4())[:8]
     SELECTED_QTY_CACHE[session_id] = {"pid": pid, "created_at": time.time()}
+    return f"qty|{session_id}|{qty}"
 
+
+def qty_custom_callback(pid: str) -> str:
+    data = f"qtycustompid|{pid}"
+    if len(data.encode("utf-8")) <= 64:
+        return data
+
+    import uuid
+    cleanup_expired_sessions()
+    session_id = str(uuid.uuid4())[:8]
+    SELECTED_QTY_CACHE[session_id] = {"pid": pid, "created_at": time.time()}
+    return f"qtycustom|{session_id}"
+
+
+def qty_select_kb(pid: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("1", callback_data=f"qty|{session_id}|1"),
-         InlineKeyboardButton("2", callback_data=f"qty|{session_id}|2")],
-        [InlineKeyboardButton("5", callback_data=f"qty|{session_id}|5"),
-         InlineKeyboardButton("10", callback_data=f"qty|{session_id}|10")],
-        [InlineKeyboardButton("✏️ Tùy chỉnh", callback_data=f"qtycustom|{session_id}")],
+        [InlineKeyboardButton("1", callback_data=qty_callback(pid, 1)),
+         InlineKeyboardButton("2", callback_data=qty_callback(pid, 2))],
+        [InlineKeyboardButton("5", callback_data=qty_callback(pid, 5)),
+         InlineKeyboardButton("10", callback_data=qty_callback(pid, 10))],
+        [InlineKeyboardButton("✏️ Tùy chỉnh", callback_data=qty_custom_callback(pid))],
         [InlineKeyboardButton("⬅️ Quay lại", callback_data=f"pdetail_back|{pid}")],
     ])
 
@@ -1451,7 +1469,10 @@ async def handle_custom_qty_input(update: Update, context: ContextTypes.DEFAULT_
 
 async def qty_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str, qty: int):
     q = update.callback_query
-    await q.answer()
+    try:
+        await q.answer()
+    except Exception:
+        pass
     p = await gs_call(find_product_by_id, pid)
     if not p:
         return await q.edit_message_text("❌ Không tìm thấy sản phẩm.")
@@ -2466,7 +2487,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("qty|"):
         # ✅ FIX: Extract from session cache instead of callback_data
         _, session_id, qty_s = data.split("|", 2)
-        cached = SELECTED_QTY_CACHE.pop(session_id, {})
+        cached = SELECTED_QTY_CACHE.get(session_id, {})
         pid = cached.get("pid", "")
         if not pid:
             created_at = cached.get("created_at", 0)
@@ -2482,6 +2503,21 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if qty <= 0:
                 await q.answer("❌ Số lượng phải > 0", show_alert=True)
                 return
+            await q.answer("Đang tạo đơn...")
+            SELECTED_QTY_CACHE.pop(session_id, None)
+            return await qty_chosen(update, context, pid, qty)
+        except (ValueError, TypeError):
+            await q.answer("❌ Số lượng không hợp lệ", show_alert=True)
+            return
+
+    if data.startswith("qtypid|"):
+        _, pid, qty_s = data.split("|", 2)
+        try:
+            qty = int(qty_s)
+            if qty <= 0:
+                await q.answer("❌ Số lượng phải > 0", show_alert=True)
+                return
+            await q.answer("Đang tạo đơn...")
             return await qty_chosen(update, context, pid, qty)
         except (ValueError, TypeError):
             await q.answer("❌ Số lượng không hợp lệ", show_alert=True)
@@ -2502,6 +2538,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.answer(msg, show_alert=True)
             return
         return await set_custom_qty_prompt(update, context, pid, session_id)
+
+    if data.startswith("qtycustompid|"):
+        pid = data.split("|", 1)[1]
+        return await set_custom_qty_prompt(update, context, pid)
 
     if data.startswith("confirm|"):
         oid = data.split("|", 1)[1]
