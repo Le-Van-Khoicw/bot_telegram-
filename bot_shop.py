@@ -109,6 +109,19 @@ PENDING_QTY: Dict[int, Dict[str, Any]] = {}  # user_id -> {"product_id": ...}
 # session_id -> {"pid": ..., "created_at": timestamp}
 SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}
 SESSION_EXPIRY_SECONDS = 600  # 10 minutes
+CHECKOUT_IN_PROGRESS: set[int] = set()
+
+
+BANK_CODE_ALIASES = {
+    # VietQR uses bank BIN/acqId. Keep common typos/short names safe.
+    "MSB": "970426",
+    "MBS": "970426",
+}
+
+
+def normalized_bank_code() -> str:
+    code = PAYMENT_INFO["bank_code"].strip().upper()
+    return BANK_CODE_ALIASES.get(code, code)
 
 def cleanup_expired_sessions():
     """Remove sessions older than EXPIRY timeout"""
@@ -207,7 +220,7 @@ def build_vietqr_image_url(order_id: str, amount: int) -> str:
     # ✅ ép nội dung CK về dạng sạch: bỏ '-' và mọi ký tự lạ
     add_info = normalize_order_ref(raw_note)
 
-    bank = PAYMENT_INFO["bank_code"].strip().upper()
+    bank = normalized_bank_code()
     acc  = PAYMENT_INFO["bank_number"].strip()
     name = PAYMENT_INFO["bank_owner"].strip()
 
@@ -269,7 +282,7 @@ def build_checkout_caption_with_countdown(
 ) -> str:
     remain_text = format_countdown(remain_seconds)
     bank_acc = PAYMENT_INFO["bank_number"]
-    bank_code = PAYMENT_INFO["bank_code"].upper()
+    bank_code = normalized_bank_code()
     safe_product_name = escape_markdown(str(product_name), version=1)
 
     pay_note = normalize_order_ref(order_id) # hàm của bạn đã bỏ ký tự lạ
@@ -1485,18 +1498,27 @@ async def qty_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: st
         await q.answer()
     except Exception:
         pass
+    user_id = q.from_user.id
+    if user_id in CHECKOUT_IN_PROGRESS:
+        try:
+            await q.answer("Đơn trước đang tạo, đợi xíu nha.", show_alert=False)
+        except Exception:
+            pass
+        return
+
+    CHECKOUT_IN_PROGRESS.add(user_id)
     try:
         p = await gs_call(find_product_by_id, pid)
         if not p:
             return await q.edit_message_text("❌ Không tìm thấy sản phẩm.")
-        ok = await checkout_flow(q.from_user.id, p, qty, context, edit_query=q)
+        ok = await checkout_flow(user_id, p, qty, context, edit_query=q)
         if not ok:
             return
     except Exception as e:
-        logger.exception("checkout from qty button failed pid=%s qty=%s user=%s", pid, qty, q.from_user.id)
+        logger.exception("checkout from qty button failed pid=%s qty=%s user=%s", pid, qty, user_id)
         try:
             await context.bot.send_message(
-                chat_id=q.from_user.id,
+                chat_id=user_id,
                 text=(
                     "❌ Lỗi khi tạo đơn.\n"
                     "Bạn thử bấm mua lại giúp mình. Nếu vẫn lỗi, gửi admin ảnh màn hình này nhé."
@@ -1505,6 +1527,8 @@ async def qty_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: st
             )
         except Exception:
             logger.warning("failed to notify user after checkout error: %s", e)
+    finally:
+        CHECKOUT_IN_PROGRESS.discard(user_id)
 
 # ================== JOBS ==================
 def remove_jobs_by_prefix(app: Application, prefix: str):
@@ -1778,7 +1802,7 @@ async def checkout_flow(
                 f"⏳ Hết hạn sau: {format_countdown(ORDER_TTL_SECONDS)}\n\n"
                 "📌 Thanh toán:\n"
                 f"• STK: {PAYMENT_INFO['bank_number']}\n"
-                f"• Bank: {PAYMENT_INFO['bank_code'].upper()}\n"
+                f"• Bank: {normalized_bank_code()}\n"
                 f"• Nội dung CK: {normalize_order_ref(order_id)}\n\n"
                 "🔗 Nếu ảnh QR không hiện, bấm nút Mở QR thanh toán bên dưới."
             )
@@ -2603,12 +2627,27 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("rebuy|"):
         pid = data.split("|", 1)[1]
+        if q.from_user.id in CHECKOUT_IN_PROGRESS:
+            await q.answer("Đơn trước đang tạo, đợi xíu nha.")
+            return
         p = await gs_call(find_product_by_id, pid)
         if not p:
             await q.answer("Không tìm thấy sản phẩm", show_alert=True)
             return
-        await q.answer()
-        return await checkout_flow(q.from_user.id, p, 1, context, edit_query=q)
+        await q.answer("Đang tạo đơn...")
+        CHECKOUT_IN_PROGRESS.add(q.from_user.id)
+        try:
+            return await checkout_flow(q.from_user.id, p, 1, context, edit_query=q)
+        except Exception:
+            logger.exception("checkout from rebuy failed pid=%s user=%s", pid, q.from_user.id)
+            await context.bot.send_message(
+                chat_id=q.from_user.id,
+                text="❌ Lỗi khi tạo đơn. Bạn thử lại giúp mình nhé.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        finally:
+            CHECKOUT_IN_PROGRESS.discard(q.from_user.id)
 
     await q.answer()
 
