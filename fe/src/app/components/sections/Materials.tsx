@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, Copy, PackageCheck, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi, text, type AdminSnapshot } from "../../api";
@@ -65,6 +65,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
   const [items, setItems] = useState<MaterialItem[]>(loadItems);
   const [busy, setBusy] = useState(false);
   const [loadedRemote, setLoadedRemote] = useState(false);
+  const saveTimerRef = useRef<number | null>(null);
 
   const productCodes = useMemo(() => {
     const codes = (data?.products || []).map((p) => text(p.stock_code)).filter((x) => x !== "—");
@@ -95,6 +96,22 @@ export function Materials({ data, adminKey, refresh }: Props) {
     }
   }, [adminKey]);
 
+  const scheduleRemoteSave = useCallback((next: MaterialItem[]) => {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+    }
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      void saveRemote(next);
+    }, 2500);
+  }, [saveRemote]);
+
+  useEffect(() => () => {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     if (!data) return;
     const remoteItems = normalizeItems(data.materials || []);
@@ -124,7 +141,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
   const setAndSave = (next: MaterialItem[]) => {
     setItems(next);
     saveItems(next);
-    void saveRemote(next);
+    scheduleRemoteSave(next);
   };
 
   const importRaw = () => {
