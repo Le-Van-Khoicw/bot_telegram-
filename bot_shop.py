@@ -106,7 +106,19 @@ _ws_ful = None
 PENDING_QTY: Dict[int, Dict[str, Any]] = {}  # user_id -> {"product_id": ...}
 
 # ✅ Cache for qty selections to avoid long callback_data (Telegram limit 64 bytes)
-SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}  # session_id -> {"pid": ..., "qty": ...}
+# session_id -> {"pid": ..., "created_at": timestamp}
+SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}
+SESSION_EXPIRY_SECONDS = 600  # 10 minutes
+
+def cleanup_expired_sessions():
+    """Remove sessions older than EXPIRY timeout"""
+    now = time.time()
+    expired = [sid for sid, data in SELECTED_QTY_CACHE.items()
+               if now - data.get("created_at", now) > SESSION_EXPIRY_SECONDS]
+    for sid in expired:
+        del SELECTED_QTY_CACHE[sid]
+    if expired:
+        logger.info(f"Cleaned up {len(expired)} expired qty sessions")
 
 # ================== HELPERS ==================
 _CACHE = {
@@ -1031,8 +1043,9 @@ def qty_select_text(p: Dict[str, Any]) -> str:
 def qty_select_kb(pid: str) -> InlineKeyboardMarkup:
     # ✅ FIX: Use short session ID instead of long callback_data to avoid 64-byte limit
     import uuid
+    cleanup_expired_sessions()  # Clean up old sessions to prevent memory bloat
     session_id = str(uuid.uuid4())[:8]
-    SELECTED_QTY_CACHE[session_id] = {"pid": pid}
+    SELECTED_QTY_CACHE[session_id] = {"pid": pid, "created_at": time.time()}
 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("1", callback_data=f"qty|{session_id}|1"),
@@ -1369,7 +1382,7 @@ async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str):
         reply_markup=qty_select_kb(pid),
     )
 
-async def set_custom_qty_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str):
+async def set_custom_qty_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str, session_id: str = ""):
     q = update.callback_query
     await q.answer()
 
@@ -1382,6 +1395,10 @@ async def set_custom_qty_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         await q.message.delete()
     except Exception:
         pass
+
+    # Clear the session from cache since we're proceeding with custom input
+    if session_id:
+        SELECTED_QTY_CACHE.pop(session_id, None)
 
     await prompt_custom_qty(context, q.from_user.id, {**p, "product_id": pid})
 
@@ -2452,19 +2469,39 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cached = SELECTED_QTY_CACHE.pop(session_id, {})
         pid = cached.get("pid", "")
         if not pid:
-            await q.answer("❌ Session hết hạn, vui lòng chọn lại.", show_alert=True)
+            created_at = cached.get("created_at", 0)
+            expired_secs = int(time.time() - created_at) if created_at else 0
+            if created_at and expired_secs > SESSION_EXPIRY_SECONDS:
+                msg = f"❌ Session hết hạn ({expired_secs}s). Vui lòng bấm 'Mua ngay' lại."
+            else:
+                msg = "❌ Session không hợp lệ. Vui lòng quay lại chọn sản phẩm."
+            await q.answer(msg, show_alert=True)
             return
-        return await qty_chosen(update, context, pid, int(qty_s))
+        try:
+            qty = int(qty_s)
+            if qty <= 0:
+                await q.answer("❌ Số lượng phải > 0", show_alert=True)
+                return
+            return await qty_chosen(update, context, pid, qty)
+        except (ValueError, TypeError):
+            await q.answer("❌ Số lượng không hợp lệ", show_alert=True)
+            return
 
     if data.startswith("qtycustom|"):
         # ✅ FIX: Extract from session cache instead of callback_data
         session_id = data.split("|", 1)[1]
-        cached = SELECTED_QTY_CACHE.pop(session_id, {})
+        cached = SELECTED_QTY_CACHE.get(session_id, {})  # Use .get() to check without removing
         pid = cached.get("pid", "")
         if not pid:
-            await q.answer("❌ Session hết hạn, vui lòng chọn lại.", show_alert=True)
+            created_at = cached.get("created_at", 0)
+            expired_secs = int(time.time() - created_at) if created_at else 0
+            if created_at and expired_secs > SESSION_EXPIRY_SECONDS:
+                msg = f"❌ Session hết hạn ({expired_secs}s). Vui lòng bấm 'Mua ngay' lại."
+            else:
+                msg = "❌ Session không hợp lệ. Vui lòng quay lại chọn sản phẩm."
+            await q.answer(msg, show_alert=True)
             return
-        return await set_custom_qty_prompt(update, context, pid)
+        return await set_custom_qty_prompt(update, context, pid, session_id)
 
     if data.startswith("confirm|"):
         oid = data.split("|", 1)[1]
