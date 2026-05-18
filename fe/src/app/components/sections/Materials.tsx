@@ -59,23 +59,22 @@ function normalizeItems(rows: any[]): MaterialItem[] {
     .filter((item) => item.value);
 }
 
-function mergeItems(localItems: MaterialItem[], remoteItems: MaterialItem[]): MaterialItem[] {
-  const byValue = new Map<string, MaterialItem>();
-  remoteItems.forEach((item) => byValue.set(item.value, item));
-  localItems.forEach((item) => byValue.set(item.value, item));
-  return Array.from(byValue.values());
-}
-
 export function Materials({ data, adminKey, refresh }: Props) {
   const [raw, setRaw] = useState("");
   const [stockCode, setStockCode] = useState("");
   const [items, setItems] = useState<MaterialItem[]>(loadItems);
   const [busy, setBusy] = useState(false);
-  const [loadedRemote, setLoadedRemote] = useState(false);
   const [syncState, setSyncState] = useState<"synced" | "pending" | "saving" | "error">("synced");
   const retryTimerRef = useRef<number | null>(null);
+  const autosaveTimerRef = useRef<number | null>(null);
   const pendingSaveRef = useRef<MaterialItem[] | null>(null);
+  const pendingOptionsRef = useRef<{ upsertItems?: MaterialItem[]; deletedIds?: string[]; forceClear?: boolean } | null>(null);
   const warnedSaveErrorRef = useRef(false);
+  const syncStateRef = useRef(syncState);
+
+  useEffect(() => {
+    syncStateRef.current = syncState;
+  }, [syncState]);
 
   const productCodes = useMemo(() => {
     const codes = (data?.products || []).map((p) => text(p.stock_code)).filter((x) => x !== "—");
@@ -88,27 +87,33 @@ export function Materials({ data, adminKey, refresh }: Props) {
     BAD: items.filter((x) => x.status === "BAD").length,
   }), [items]);
 
-  const saveRemote = useCallback(async (next: MaterialItem[]): Promise<boolean> => {
+  const saveRemote = useCallback(async (
+    next: MaterialItem[],
+    options: { upsertItems?: MaterialItem[]; deletedIds?: string[]; forceClear?: boolean } = {},
+  ): Promise<boolean> => {
     try {
       setSyncState("saving");
       const result = await adminApi<{ items?: any[] }>("/admin/api/materials", adminKey, {
         method: "POST",
-        body: JSON.stringify({ items: next, force_clear: next.length === 0 }),
+        body: JSON.stringify({
+          items: options.upsertItems ?? next,
+          deleted_ids: options.deletedIds || [],
+          force_clear: Boolean(options.forceClear),
+        }),
       });
       if (result.items) {
         const synced = normalizeItems(result.items);
-        if (synced.length > 0 || next.length === 0) {
-          const merged = next.length === 0 ? synced : mergeItems(loadItems(), synced);
-          setItems(merged);
-          saveItems(merged);
-        }
+        setItems(synced);
+        saveItems(synced);
       }
       pendingSaveRef.current = null;
+      pendingOptionsRef.current = null;
       warnedSaveErrorRef.current = false;
       setSyncState("synced");
       return true;
     } catch (error) {
       pendingSaveRef.current = next;
+      pendingOptionsRef.current = options;
       setSyncState("error");
       if (!warnedSaveErrorRef.current) {
         warnedSaveErrorRef.current = true;
@@ -125,85 +130,111 @@ export function Materials({ data, adminKey, refresh }: Props) {
       retryTimerRef.current = window.setTimeout(() => {
         retryTimerRef.current = null;
         const pending = pendingSaveRef.current;
-        if (pending) void saveRemote(pending);
+        const pendingOptions = pendingOptionsRef.current || {};
+        if (pending) void saveRemote(pending, pendingOptions);
       }, 300000);
       return false;
     }
+  }, [adminKey]);
+
+  const fetchRemoteMaterials = useCallback(async () => {
+    if (!adminKey || pendingSaveRef.current || syncStateRef.current === "saving") return;
+    const result = await adminApi<{ items?: any[] }>("/admin/api/materials", adminKey);
+    const remoteItems = normalizeItems(result.items || []);
+    setItems(remoteItems);
+    saveItems(remoteItems);
   }, [adminKey]);
 
   useEffect(() => () => {
     if (retryTimerRef.current) {
       window.clearTimeout(retryTimerRef.current);
     }
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current);
+    }
   }, []);
 
   useEffect(() => {
+    if (!adminKey) return;
+    void fetchRemoteMaterials().catch(() => undefined);
+    const timer = window.setInterval(() => {
+      void fetchRemoteMaterials().catch(() => undefined);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [adminKey, fetchRemoteMaterials]);
+
+  useEffect(() => {
     if (!data) return;
+    if (pendingSaveRef.current || syncStateRef.current === "saving") return;
     const remoteItems = normalizeItems(data.materials || []);
-    if (remoteItems.length > 0) {
-      const merged = mergeItems(loadItems(), remoteItems);
-      setItems(merged);
-      saveItems(merged);
-      setLoadedRemote(true);
-      return;
-    }
-
-    const localItems = loadItems();
-    const candidateItems = items.length > 0 ? items : localItems;
-    if (!loadedRemote && candidateItems.length > 0) {
-      setItems(candidateItems);
-      saveItems(candidateItems);
-      pendingSaveRef.current = candidateItems;
-      setSyncState("pending");
-      setLoadedRemote(true);
-      return;
-    }
-
-    // Empty remote means the shared MATERIALS sheet has no rows yet. Do not
-    // overwrite local/browser data with an empty list.
-    setLoadedRemote(true);
+    setItems(remoteItems);
+    saveItems(remoteItems);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.generated_at, saveRemote]);
+  }, [data?.generated_at]);
 
-  const setAndSave = (next: MaterialItem[]) => {
+  const setAndSave = (
+    next: MaterialItem[],
+    options: { upsertItems?: MaterialItem[]; deletedIds?: string[]; forceClear?: boolean } = {},
+  ) => {
     setItems(next);
     saveItems(next);
     pendingSaveRef.current = next;
+    pendingOptionsRef.current = options;
     setSyncState("pending");
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current);
+    }
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void saveRemote(next, options);
+    }, 800);
   };
 
   const syncNow = () => {
     const pending = pendingSaveRef.current || items;
-    void saveRemote(pending);
+    void saveRemote(pending, pendingOptionsRef.current || {});
   };
 
   const importRaw = () => {
     const lines = raw.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
     if (!lines.length) return;
     const existed = new Set(items.map((x) => x.value));
+    const added = lines
+      .filter((line) => !existed.has(line))
+      .map((line) => ({ id: makeId(), value: line, status: "NEW" as const }));
     const next = [
       ...items,
-      ...lines.filter((line) => !existed.has(line)).map((line) => ({ id: makeId(), value: line, status: "NEW" as const })),
+      ...added,
     ];
     setRaw("");
-    setAndSave(next);
+    setAndSave(next, { upsertItems: added });
     toast.success(`Đã nhập ${next.length - items.length} dòng nguyên liệu`);
   };
 
   const updateStatus = (id: string, status: MaterialStatus) => {
-    setAndSave(items.map((item) => item.id === id ? { ...item, status } : item));
+    const changed = items.find((item) => item.id === id);
+    if (!changed) return;
+    const updated = { ...changed, status };
+    setAndSave(items.map((item) => item.id === id ? updated : item), { upsertItems: [updated] });
   };
 
   const bulkUpdateStatus = (from: MaterialStatus, to: MaterialStatus) => {
     const changed = items.filter((item) => item.status === from).length;
     if (!changed) return toast.info("Không có dòng nào để chuyển");
-    setAndSave(items.map((item) => item.status === from ? { ...item, status: to } : item));
+    const changedItems = items.filter((item) => item.status === from).map((item) => ({ ...item, status: to }));
+    setAndSave(
+      items.map((item) => item.status === from ? { ...item, status: to } : item),
+      { upsertItems: changedItems },
+    );
     toast.success(`Đã chuyển ${changed} dòng sang ${to === "OK" ? "OK" : "Lỗi"}`);
   };
 
   const clearStatus = (status?: MaterialStatus) => {
     const next = status ? items.filter((item) => item.status !== status) : [];
-    setAndSave(next);
+    const deletedIds = status
+      ? items.filter((item) => item.status === status).map((item) => item.id)
+      : items.map((item) => item.id);
+    setAndSave(next, { upsertItems: [], deletedIds, forceClear: !status });
   };
 
   const copyItems = async (status: MaterialStatus) => {
@@ -230,7 +261,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
       const next = items.filter((item) => item.status !== "OK");
       setItems(next);
       saveItems(next);
-      await saveRemote(next);
+      await saveRemote(next, { upsertItems: [], deletedIds: okItems.map((item) => item.id) });
       toast.success(`Đã thêm ${okItems.length} dòng OK vào kho ${stockCode}`);
       await refresh();
     } finally {

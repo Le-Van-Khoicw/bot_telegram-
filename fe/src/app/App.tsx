@@ -14,11 +14,12 @@ import { Reservations } from "./components/sections/Reservations";
 import { Fulfillments } from "./components/sections/Fulfillments";
 import { Button } from "./components/ui/button";
 import { adminApi, money, text, type AdminSnapshot } from "./api";
+import { clearToken, getToken, saveToken } from "./utils/auth";
 
 const POLL_MS = 15_000;
 
 export default function App() {
-  const [adminKey, setAdminKey] = useState(() => sessionStorage.getItem("admin_key") || "");
+  const [adminKey, setAdminKey] = useState(() => getToken() || "");
   const [section, setSection] = useState<AdminSection>("overview");
   const [data, setData] = useState<AdminSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
@@ -164,8 +165,15 @@ export default function App() {
       setData(next);
       setMessage(`Cập nhật lúc ${next.generated_at} (${next.timezone})`);
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Không tải được dữ liệu";
+      if (errorMessage.toLowerCase().includes("unauthorized")) {
+        clearToken();
+        setAdminKey("");
+        setData(null);
+        initializedRef.current = false;
+      }
       if (!options.silent) {
-        setMessage(err instanceof Error ? err.message : "Không tải được dữ liệu");
+        setMessage(errorMessage);
       }
       throw err;
     } finally {
@@ -191,13 +199,13 @@ export default function App() {
 
   const handleLogin = async (key: string) => {
     await adminApi("/admin/api/login", key);
-    sessionStorage.setItem("admin_key", key);
+    saveToken(key);
     setAdminKey(key);
     setNewCount(0);
   };
 
   const handleLogout = () => {
-    sessionStorage.removeItem("admin_key");
+    clearToken();
     setAdminKey("");
     setData(null);
     setNewCount(0);

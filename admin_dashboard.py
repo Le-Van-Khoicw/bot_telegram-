@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from admin_services import add_stock, release_holds, release_order, save_materials, save_product, snapshot, update_order
+from admin_services import add_stock, load_materials, release_holds, release_order, save_materials, save_product, snapshot, update_order
 
 
 ADMIN_HTML = """<!doctype html>
@@ -493,5 +493,14 @@ def register_admin_routes(app: FastAPI) -> None:
         require_admin(request)
         try:
             return await asyncio.to_thread(save_materials, await request.json())
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.get("/admin/api/materials")
+    async def admin_get_materials(request: Request):
+        require_admin(request)
+        try:
+            items = await asyncio.to_thread(load_materials)
+            return {"ok": True, "items": items}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc

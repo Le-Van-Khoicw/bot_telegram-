@@ -1,4 +1,5 @@
 import logging
+import os
 import random
 import string
 from typing import Any, Dict, List
@@ -9,7 +10,11 @@ import bot_shop as shop
 
 MATERIALS_TAB = "MATERIALS"
 MATERIALS_HEADERS = ["id", "value", "status", "note", "created_at", "updated_at"]
+MATERIALS_COLLECTION = os.getenv("FIREBASE_MATERIALS_COLLECTION", "materials").strip() or "materials"
 logger = logging.getLogger("admin_services")
+
+_firebase_ready = False
+_firestore_client = None
 
 
 def _records(ws) -> List[Dict[str, str]]:
@@ -32,6 +37,153 @@ def _row_from_headers(headers: Dict[str, int], data: Dict[str, Any]) -> List[str
 def _make_item_id(stock_code: str) -> str:
     suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
     return f"{stock_code.strip().upper()}-{shop.now_dt().strftime('%Y%m%d%H%M%S')}-{suffix}"
+
+
+def _firestore():
+    global _firebase_ready, _firestore_client
+    if _firestore_client is not None:
+        return _firestore_client
+    if _firebase_ready:
+        return None
+    _firebase_ready = True
+
+    try:
+        import json
+        import firebase_admin
+        from firebase_admin import credentials, firestore
+    except Exception as exc:
+        logger.warning("firebase-admin chua san sang, fallback MATERIALS sang Google Sheet: %s", exc)
+        return None
+
+    json_content = os.getenv("FIREBASE_JSON_CONTENT", "").strip()
+    cred_file = os.getenv("FIREBASE_CREDENTIALS_FILE", "").strip()
+    try:
+        if not firebase_admin._apps:
+            if json_content:
+                info = json.loads(json_content)
+                cred = credentials.Certificate(info)
+            elif cred_file:
+                cred = credentials.Certificate(cred_file)
+            elif os.path.exists("bot_tele.json"):
+                cred = credentials.Certificate("bot_tele.json")
+            else:
+                logger.warning("Khong co FIREBASE_JSON_CONTENT/FIREBASE_CREDENTIALS_FILE de dung Firestore")
+                return None
+            firebase_admin.initialize_app(cred)
+        _firestore_client = firestore.client()
+        return _firestore_client
+    except Exception as exc:
+        logger.warning("init Firestore failed, fallback MATERIALS sang Google Sheet: %s", exc)
+        return None
+
+
+def _normalize_material(raw: Dict[str, Any], now: str) -> Dict[str, str]:
+    value = str(raw.get("value") or "").strip()
+    status = str(raw.get("status") or "NEW").strip().upper()
+    if status not in ("NEW", "OK", "BAD"):
+        status = "NEW"
+    return {
+        "id": str(raw.get("id") or "").strip() or f"MAT-{shop.now_dt().strftime('%Y%m%d%H%M%S')}-{random.randint(1000, 9999)}",
+        "value": value,
+        "status": status,
+        "note": str(raw.get("note") or ""),
+        "created_at": str(raw.get("created_at") or now),
+        "updated_at": now,
+    }
+
+
+def _load_materials_firestore() -> List[Dict[str, str]]:
+    db = _firestore()
+    if not db:
+        return []
+    docs = db.collection(MATERIALS_COLLECTION).stream()
+    rows: List[Dict[str, str]] = []
+    for doc in docs:
+        data = doc.to_dict() or {}
+        value = str(data.get("value") or "").strip()
+        if not value:
+            continue
+        row = {key: str(data.get(key) or "") for key in MATERIALS_HEADERS}
+        row["id"] = row["id"] or doc.id
+        rows.append(row)
+    if not rows:
+        rows = _migrate_materials_sheet_to_firestore(db)
+    rows.sort(key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True)
+    return rows
+
+
+def _migrate_materials_sheet_to_firestore(db) -> List[Dict[str, str]]:
+    col = db.collection(MATERIALS_COLLECTION)
+    meta_ref = col.document("__meta__")
+    try:
+        if meta_ref.get().exists:
+            return []
+    except Exception:
+        return []
+
+    try:
+        rows = _records(_materials_ws(update_header=False))
+    except Exception as exc:
+        logger.warning("Khong migrate MATERIALS tu Sheet duoc: %s", exc)
+        rows = []
+
+    now = shop.now_str()
+    migrated: List[Dict[str, str]] = []
+    for raw in rows:
+        if not str(raw.get("value") or "").strip():
+            continue
+        material = _normalize_material(raw, now)
+        col.document(material["id"]).set(material, merge=True)
+        migrated.append(material)
+
+    meta_ref.set({"migrated_at": now, "source": "google_sheet", "count": len(migrated)}, merge=True)
+    return migrated
+
+
+def _save_materials_firestore(data: Dict[str, Any]) -> Dict[str, Any]:
+    db = _firestore()
+    if not db:
+        return {"ok": False, "firebase": False, "items": []}
+
+    col = db.collection(MATERIALS_COLLECTION)
+    now = shop.now_str()
+    current = _load_materials_firestore()
+    by_value = {item.get("value", ""): item for item in current if item.get("value")}
+    by_id = {item.get("id", ""): item for item in current if item.get("id")}
+
+    if bool(data.get("force_clear")):
+        for item in current:
+            if item.get("id"):
+                col.document(item["id"]).delete()
+        return {"ok": True, "firebase": True, "saved": 0, "items": []}
+
+    for raw_id in data.get("deleted_ids") or []:
+        item_id = str(raw_id or "").strip()
+        if item_id:
+            col.document(item_id).delete()
+
+    raw_items = data.get("items") or []
+    if not isinstance(raw_items, list):
+        raise ValueError("items must be a list")
+
+    seen_values = set()
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        material = _normalize_material(raw, now)
+        if not material["value"] or material["value"] in seen_values:
+            continue
+        seen_values.add(material["value"])
+
+        existing = by_id.get(material["id"]) or by_value.get(material["value"])
+        if existing:
+            material["id"] = existing["id"]
+            material["created_at"] = existing.get("created_at") or material["created_at"]
+
+        col.document(material["id"]).set(material, merge=True)
+
+    items = _load_materials_firestore()
+    return {"ok": True, "firebase": True, "saved": len(items), "items": items}
 
 
 def _materials_ws(update_header: bool = True):
@@ -59,12 +211,18 @@ def _materials_ws(update_header: bool = True):
 
 
 def load_materials() -> List[Dict[str, str]]:
+    if _firestore():
+        return _load_materials_firestore()
     rows = _records(_materials_ws(update_header=False))
     rows.sort(key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True)
     return rows
 
 
 def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
+    firestore_result = _save_materials_firestore(data)
+    if firestore_result.get("firebase"):
+        return firestore_result
+
     ws = _materials_ws()
     raw_items = data.get("items") or []
     if not isinstance(raw_items, list):
