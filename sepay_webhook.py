@@ -3,7 +3,7 @@ import io
 import re
 import asyncio
 import logging
-import json 
+import json
 from datetime import datetime, timedelta
 from gspread.cell import Cell
 from typing import Any, Dict, Optional, List, Tuple
@@ -622,7 +622,9 @@ async def send_delivery_message(user_id: int, order_id: str, stock_code: str, qt
 def parse_sepay_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     desc = (payload.get("description") or payload.get("content") or "").strip()
     amount = safe_int(payload.get("transferAmount"), 0)
-    txn_id = (payload.get("referenceCode") or payload.get("id") or "").__str__().strip()
+    # ✅ FIX #1: Cleaner txn_id parsing
+    ref = payload.get("referenceCode") or payload.get("id") or ""
+    txn_id = str(ref).strip()
     transfer_type = (payload.get("transferType") or "").strip().lower()
     return {"description": desc, "amount": amount, "txn_id": txn_id, "transfer_type": transfer_type}
 
@@ -641,14 +643,16 @@ async def process_payment(payload: Dict[str, Any]) -> None:
 
     extracted = extract_order_id(desc)
     if not extracted:
-        logger.warning("No order_id found in desc=%s", desc)
+        logger.warning("NO_ORDER_ID | desc=%s | regex=%s", desc[:100], ORDER_ID_REGEX)
         return
+    logger.info("ORDER_EXTRACTED | %s", extracted)
 
-    # 1) tìm order trong ORDERS trực tiếp bằng extracted
+    # 1) tim order trong ORDERS truc tiep bang extracted
     order, rownum, err = await gs_call(get_order_by_id, extracted)
     if not order or not rownum:
-        logger.warning("Order not found | extracted=%s | err=%s", extracted, err)
+        logger.warning("ORDER_NOT_FOUND | extracted=%s | err=%s", extracted, err)
         return
+    logger.info("ORDER_FOUND | rownum=%s | status=%s | total=%s", rownum, order.get("status"), order.get("total"))
 
     # ✅ canonical_oid: lấy đúng order_id như trong sheet (có thể có '-')
     canonical_oid = (order.get("order_id") or extracted).strip()
@@ -725,21 +729,27 @@ async def process_payment(payload: Dict[str, Any]) -> None:
         return
     user_id = int(user_id_s)
 
-    if CHECK_AMOUNT and total_need and amount != total_need:
-        logger.warning("Amount mismatch for %s: got=%s need=%s", canonical_oid, amount, total_need)
-        await notify_admins(
-            "⚠️ Có giao dịch sai số tiền\n"
-            f"Order: {canonical_oid}\n"
-            f"Khách: {user_id}\n"
-            f"Stock: {stock_code}\n"
-            f"Cần: {money_vnd(total_need)}\n"
-            f"Nhận: {money_vnd(amount)}\n"
-            f"TX: {txn_id}"
-        )
-        return
+    # ✅ FIX #2: Add tolerance for amount validation (allow ±500 VND for rounding)
+    AMOUNT_TOLERANCE = 500
+    if CHECK_AMOUNT and total_need:
+        amount_diff = abs(amount - total_need)
+        if amount_diff > AMOUNT_TOLERANCE:
+            logger.warning("Amount mismatch for %s: got=%s need=%s diff=%s", canonical_oid, amount, total_need, amount_diff)
+            await notify_admins(
+                "⚠️ Có giao dịch sai số tiền\n"
+                f"Order: {canonical_oid}\n"
+                f"Khách: {user_id}\n"
+                f"Stock: {stock_code}\n"
+                f"Cần: {money_vnd(total_need)}\n"
+                f"Nhận: {money_vnd(amount)}\n"
+                f"Chênh: {money_vnd(amount_diff)} (Tolerance: {money_vnd(AMOUNT_TOLERANCE)})\n"
+                f"TX: {txn_id}"
+            )
+            return
 
     # 2) mark PAID (chỉ update rownum)
     paid_at = now_str()
+    logger.info("MARKING_PAID | order=%s | amount=%s | rownum=%s", canonical_oid, amount, rownum)
     await gs_call(update_order_cells, rownum, {"status": "PAID", "paid_at": paid_at, "tx_id": txn_id})
     await notify_admins(
         "💰 Đã nhận thanh toán\n"
