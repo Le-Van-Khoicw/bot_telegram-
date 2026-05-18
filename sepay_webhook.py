@@ -660,14 +660,15 @@ async def process_payment(payload: Dict[str, Any]) -> None:
     status = (order.get("status") or "PENDING").upper()
     if status in ("DELIVERED", "CANCELLED", "EXPIRED"):
         logger.info("Skip status=%s for %s", status, canonical_oid)
-        await notify_admins(
+        # ✅ Background notification - không đợi
+        asyncio.create_task(notify_admins(
             "⚠️ Có giao dịch vào đơn đã đóng\n"
             f"Order: {canonical_oid}\n"
             f"Trạng thái hiện tại: {status}\n"
             f"Số tiền: {money_vnd(amount)}\n"
             f"TX: {txn_id}\n"
             f"Nội dung: {desc[:300]}"
-        )
+        ))
         return
 
     created_at = (order.get("created_at") or "").strip()
@@ -694,7 +695,8 @@ async def process_payment(payload: Dict[str, Any]) -> None:
             except Exception:
                 pass
 
-        await notify_admins(
+        # ✅ Background notification - không đợi
+        asyncio.create_task(notify_admins(
             "⚠️ Có thanh toán nhưng đơn đã quá hạn\n"
             f"Order: {canonical_oid}\n"
             f"Khách: {user_id_s}\n"
@@ -702,7 +704,7 @@ async def process_payment(payload: Dict[str, Any]) -> None:
             f"TX: {txn_id}\n"
             f"Đã trả kho: {released} item\n"
             f"TTL: {ORDER_TTL_SECONDS // 60} phút"
-        )
+        ))
         return
 
     # ✅ FIX: chặn webhook retry / duplicate
@@ -735,7 +737,8 @@ async def process_payment(payload: Dict[str, Any]) -> None:
         amount_diff = abs(amount - total_need)
         if amount_diff > AMOUNT_TOLERANCE:
             logger.warning("Amount mismatch for %s: got=%s need=%s diff=%s", canonical_oid, amount, total_need, amount_diff)
-            await notify_admins(
+            # ✅ Background notification - không đợi
+            asyncio.create_task(notify_admins(
                 "⚠️ Có giao dịch sai số tiền\n"
                 f"Order: {canonical_oid}\n"
                 f"Khách: {user_id}\n"
@@ -744,14 +747,15 @@ async def process_payment(payload: Dict[str, Any]) -> None:
                 f"Nhận: {money_vnd(amount)}\n"
                 f"Chênh: {money_vnd(amount_diff)} (Tolerance: {money_vnd(AMOUNT_TOLERANCE)})\n"
                 f"TX: {txn_id}"
-            )
+            ))
             return
 
     # 2) mark PAID (chỉ update rownum)
     paid_at = now_str()
     logger.info("MARKING_PAID | order=%s | amount=%s | rownum=%s", canonical_oid, amount, rownum)
     await gs_call(update_order_cells, rownum, {"status": "PAID", "paid_at": paid_at, "tx_id": txn_id})
-    await notify_admins(
+    # ✅ Background notification - không đợi
+    asyncio.create_task(notify_admins(
         "💰 Đã nhận thanh toán\n"
         f"Order: {canonical_oid}\n"
         f"Khách: {user_id}\n"
@@ -760,7 +764,7 @@ async def process_payment(payload: Dict[str, Any]) -> None:
         f"Số tiền: {money_vnd(amount)}\n"
         f"TX: {txn_id}\n"
         "Đang giao hàng tự động..."
-    )
+    ))
 
     # 3) take HELD -> SOLD and get secrets
     #    (Fix2: dùng canonical_oid; Fix1: pool function sẽ so bằng norm_oid)
@@ -783,7 +787,8 @@ async def process_payment(payload: Dict[str, Any]) -> None:
             rownum,
             {"status": "PAID", "deliver_text": "(POOL_EMPTY)", "delivered_at": ""},
         )
-        await notify_admins(
+        # ✅ Background notification - không đợi
+        asyncio.create_task(notify_admins(
             "⚠️ Đơn đã thanh toán nhưng chưa giao được\n"
             f"Order: {canonical_oid}\n"
             f"Khách: {user_id}\n"
@@ -791,7 +796,7 @@ async def process_payment(payload: Dict[str, Any]) -> None:
             f"SL: {qty}\n"
             f"Số tiền: {money_vnd(amount)}\n"
             "Lý do: Không lấy được item HELD/secret từ POOL."
-        )
+        ))
         return
 
     delivered_at = now_str()
@@ -843,7 +848,8 @@ async def process_payment(payload: Dict[str, Any]) -> None:
             except Exception:
                 pass
 
-    await notify_admins(
+    # ✅ Background notification - không đợi
+    asyncio.create_task(notify_admins(
         "✅ Có đơn đã thanh toán và giao tự động\n"
         f"Order: {canonical_oid}\n"
         f"Khách: {user_id}\n"
@@ -852,7 +858,7 @@ async def process_payment(payload: Dict[str, Any]) -> None:
         f"Số tiền: {money_vnd(amount)}\n"
         f"TX: {txn_id}\n"
         f"Giao lúc: {delivered_at}"
-    )
+    ))
 
     logger.info("DELIVERED ok: %s user=%s qty=%s secrets=%s", canonical_oid, user_id, qty, len(secrets))
 def get_all_pending_orders() -> List[Tuple[int, Dict[str, Any]]]:

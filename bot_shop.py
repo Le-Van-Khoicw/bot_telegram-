@@ -1405,7 +1405,12 @@ async def handle_custom_qty_input(update: Update, context: ContextTypes.DEFAULT_
 
     t = (update.message.text or "").strip()
     if not t.isdigit() or int(t) <= 0:
-        await update.message.reply_text("❗ Vui lòng nhập số nguyên >= 1.")
+        await update.message.reply_text(
+            "❗ Vui lòng nhập số nguyên >= 1.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Quay lại", callback_data=f"buy|{pid}")
+            ]])
+        )
         return True
 
     qty = int(t)
