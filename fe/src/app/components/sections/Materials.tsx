@@ -278,7 +278,8 @@ export function Materials({ data, adminKey, refresh }: Props) {
         : "";
     return (
       <Card className="shadow-sm">
-        <CardContent className="p-0 overflow-x-auto">
+        <CardContent className="p-0">
+          <div className="hidden overflow-x-auto md:block">
           <Table className="min-w-[760px]">
             <TableHeader>
               <TableRow>
@@ -311,6 +312,39 @@ export function Materials({ data, adminKey, refresh }: Props) {
               {visible.length === 0 && <TableRow><TableCell colSpan={3} className="text-center py-8 text-muted-foreground">Chưa có dữ liệu</TableCell></TableRow>}
             </TableBody>
           </Table>
+          </div>
+
+          <div className="md:hidden">
+            <div className="grid grid-cols-[48px_minmax(0,1fr)_104px] border-b bg-muted/40 px-3 py-2 text-sm font-medium">
+              <div>STT</div>
+              <div>Nguyên liệu</div>
+              <div className="text-right">Thao tác</div>
+            </div>
+            {visible.map((item, index) => (
+              <div
+                key={item.id}
+                className={`grid grid-cols-[48px_minmax(0,1fr)_104px] items-center gap-2 border-b px-3 py-2 ${rowClass}`}
+              >
+                <div className="text-sm text-muted-foreground">{index + 1}</div>
+                <button
+                  type="button"
+                  className="min-w-0 truncate text-left font-mono text-xs leading-8 active:bg-muted"
+                  title="Chạm để copy"
+                  onClick={() => copyOne(item.value)}
+                >
+                  {item.value}
+                </button>
+                <div className="flex justify-end gap-1">
+                  <Button size="sm" variant="outline" className="h-8 w-8 px-0 text-xs" onClick={() => updateStatus(item.id, "OK")}>OK</Button>
+                  <Button size="sm" variant="outline" className="h-8 w-8 px-0 text-xs" onClick={() => updateStatus(item.id, "BAD")}>Lỗi</Button>
+                  <Button size="sm" variant="ghost" className="h-8 w-8 px-0" onClick={() => updateStatus(item.id, "NEW")}><RotateCcw size={14} /></Button>
+                </div>
+              </div>
+            ))}
+            {visible.length === 0 && (
+              <div className="py-8 text-center text-sm text-muted-foreground">Chưa có dữ liệu</div>
+            )}
+          </div>
         </CardContent>
       </Card>
     );
