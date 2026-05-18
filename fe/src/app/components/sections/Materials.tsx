@@ -153,8 +153,9 @@ export function Materials({ data, adminKey, refresh }: Props) {
     if (!loadedRemote && candidateItems.length > 0) {
       setItems(candidateItems);
       saveItems(candidateItems);
+      pendingSaveRef.current = candidateItems;
+      setSyncState("pending");
       setLoadedRemote(true);
-      void saveRemote(candidateItems);
       return;
     }
 

@@ -48,9 +48,13 @@ def _materials_ws(update_header: bool = True):
         ws.update("A1:F1", [MATERIALS_HEADERS], value_input_option="USER_ENTERED")
         return ws
 
-    headers = [str(h).strip().lower() for h in ws.row_values(1)]
-    if update_header and headers != MATERIALS_HEADERS:
-        ws.update("A1:F1", [MATERIALS_HEADERS], value_input_option="USER_ENTERED")
+    if update_header:
+        try:
+            headers = [str(h).strip().lower() for h in ws.row_values(1)]
+        except Exception:
+            headers = []
+        if not any(headers):
+            ws.update("A1:F1", [MATERIALS_HEADERS], value_input_option="USER_ENTERED")
     return ws
 
 
@@ -66,7 +70,7 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(raw_items, list):
         raise ValueError("items must be a list")
     force_clear = bool(data.get("force_clear"))
-    existing_items = _records(ws) if not raw_items else []
+    existing_items = _records(ws)
 
     now = shop.now_str()
     rows = [MATERIALS_HEADERS]
@@ -92,16 +96,15 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
         ])
 
     if len(rows) == 1 and existing_items and not force_clear:
-        return {"ok": True, "saved": len(existing_items), "items": load_materials(), "skipped_empty_save": True}
+        return {"ok": True, "saved": len(existing_items), "items": existing_items, "skipped_empty_save": True}
 
     try:
-        ws.resize(rows=max(len(rows), 1000), cols=len(MATERIALS_HEADERS))
-    except Exception as exc:
-        logger.warning("resize MATERIALS sheet failed: %s", exc)
-
-    try:
-        ws.clear()
-        ws.update(f"A1:F{len(rows)}", rows, value_input_option="RAW")
+        # Same spirit as adding stock: keep saving to one Sheet write request.
+        # Blank trailing rows clear old MATERIALS rows when the list shrinks.
+        target_rows = max(len(rows), len(existing_items) + 1, 2)
+        blank = [""] * len(MATERIALS_HEADERS)
+        payload = rows + [blank for _ in range(target_rows - len(rows))]
+        ws.update(f"A1:F{target_rows}", payload, value_input_option="RAW")
     except Exception as exc:
         logger.exception("save_materials failed: rows=%s force_clear=%s", len(rows) - 1, force_clear)
         raise RuntimeError(f"Không lưu được MATERIALS: {exc}") from exc
