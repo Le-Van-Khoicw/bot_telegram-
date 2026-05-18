@@ -20,6 +20,7 @@ interface Props {
 }
 
 const STORAGE_KEY = "admin_material_items_v1";
+const BACKUP_KEY = "admin_material_items_backup_v1";
 
 function makeId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -28,7 +29,10 @@ function makeId() {
 function loadItems(): MaterialItem[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed : [];
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+
+    const backup = JSON.parse(localStorage.getItem(BACKUP_KEY) || "[]");
+    return Array.isArray(backup) ? backup : [];
   } catch {
     return [];
   }
@@ -36,6 +40,9 @@ function loadItems(): MaterialItem[] {
 
 function saveItems(items: MaterialItem[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  if (items.length > 0) {
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(items));
+  }
 }
 
 function normalizeItems(rows: any[]): MaterialItem[] {
@@ -78,8 +85,10 @@ export function Materials({ data, adminKey, refresh }: Props) {
       });
       if (result.items) {
         const synced = normalizeItems(result.items);
-        setItems(synced);
-        saveItems(synced);
+        if (synced.length > 0 || next.length === 0) {
+          setItems(synced);
+          saveItems(synced);
+        }
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không lưu được nguyên liệu lên server");
@@ -96,14 +105,18 @@ export function Materials({ data, adminKey, refresh }: Props) {
       return;
     }
 
-    if (!loadedRemote && items.length > 0) {
+    const localItems = loadItems();
+    const candidateItems = items.length > 0 ? items : localItems;
+    if (!loadedRemote && candidateItems.length > 0) {
+      setItems(candidateItems);
+      saveItems(candidateItems);
       setLoadedRemote(true);
-      void saveRemote(items);
+      void saveRemote(candidateItems);
       return;
     }
 
-    setItems(remoteItems);
-    saveItems(remoteItems);
+    // Empty remote means the shared MATERIALS sheet has no rows yet. Do not
+    // overwrite local/browser data with an empty list.
     setLoadedRemote(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.generated_at, saveRemote]);
