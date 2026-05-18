@@ -648,18 +648,21 @@ def release_hold_by_order(order_id: str, mark_status: str) -> int:
         return 0
 
     released = 0
+    pool_cells: List[Cell] = []
     for idx in range(2, len(pool_vals) + 1):
         r = pool_vals[idx - 1]
         hold_oid = r[c_hold_oid - 1].strip() if c_hold_oid - 1 < len(r) else ""
         st = r[c_status - 1].strip().upper() if c_status - 1 < len(r) else ""
         if hold_oid == order_id and st == "HELD":
-            _ws_pool.update_cell(idx, c_status, "READY")
-            _ws_pool.update_cell(idx, c_hold_oid, "")
+            pool_cells.append(Cell(idx, c_status, "READY"))
+            pool_cells.append(Cell(idx, c_hold_oid, ""))
             if c_hold_at:
-                _ws_pool.update_cell(idx, c_hold_at, "")
+                pool_cells.append(Cell(idx, c_hold_at, ""))
             if c_hold_exp:
-                _ws_pool.update_cell(idx, c_hold_exp, "")
+                pool_cells.append(Cell(idx, c_hold_exp, ""))
             released += 1
+    if pool_cells:
+        _ws_pool.update_cells(pool_cells, value_input_option="USER_ENTERED")
 
     # RESERVATIONS.released_at
     res_vals = _ws_res.get_all_values()
@@ -668,14 +671,19 @@ def release_hold_by_order(order_id: str, mark_status: str) -> int:
         c_oid = rh.get("order_id")
         c_rel = rh.get("released_at")
         if c_oid and c_rel:
+            res_cells: List[Cell] = []
+            released_at = now_str()
             for idx in range(2, len(res_vals) + 1):
                 r = res_vals[idx - 1]
                 oid = r[c_oid - 1].strip() if c_oid - 1 < len(r) else ""
                 if oid == order_id:
-                    _ws_res.update_cell(idx, c_rel, now_str())
+                    res_cells.append(Cell(idx, c_rel, released_at))
+            if res_cells:
+                _ws_res.update_cells(res_cells, value_input_option="USER_ENTERED")
 
-    set_order_fields(order_id, {"status": mark_status})
-    invalidate_stock_cache()
+    if released:
+        set_order_fields(order_id, {"status": mark_status})
+        invalidate_stock_cache()
     return released
 
 
