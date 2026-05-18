@@ -65,7 +65,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
   const [items, setItems] = useState<MaterialItem[]>(loadItems);
   const [busy, setBusy] = useState(false);
   const [loadedRemote, setLoadedRemote] = useState(false);
-  const saveTimerRef = useRef<number | null>(null);
+  const [syncState, setSyncState] = useState<"synced" | "pending" | "saving" | "error">("synced");
   const retryTimerRef = useRef<number | null>(null);
   const pendingSaveRef = useRef<MaterialItem[] | null>(null);
   const warnedSaveErrorRef = useRef(false);
@@ -83,6 +83,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
 
   const saveRemote = useCallback(async (next: MaterialItem[]): Promise<boolean> => {
     try {
+      setSyncState("saving");
       const result = await adminApi<{ items?: any[] }>("/admin/api/materials", adminKey, {
         method: "POST",
         body: JSON.stringify({ items: next, force_clear: next.length === 0 }),
@@ -96,12 +97,19 @@ export function Materials({ data, adminKey, refresh }: Props) {
       }
       pendingSaveRef.current = null;
       warnedSaveErrorRef.current = false;
+      setSyncState("synced");
       return true;
     } catch (error) {
       pendingSaveRef.current = next;
+      setSyncState("error");
       if (!warnedSaveErrorRef.current) {
         warnedSaveErrorRef.current = true;
-        toast.warning("Đã lưu tạm trên máy. Google Sheet đang bận, web sẽ tự sync lại sau.");
+        const message = error instanceof Error ? error.message : "";
+        const isQuota = message.toLowerCase().includes("quota exceeded");
+        toast.warning(isQuota
+          ? "Google Sheet đang giới hạn lượt ghi. Dữ liệu đã lưu tạm trên máy, hãy đồng bộ lại sau vài phút."
+          : "Đã lưu tạm trên máy. Web sẽ thử đồng bộ lại sau."
+        );
       }
       if (retryTimerRef.current) {
         window.clearTimeout(retryTimerRef.current);
@@ -110,25 +118,12 @@ export function Materials({ data, adminKey, refresh }: Props) {
         retryTimerRef.current = null;
         const pending = pendingSaveRef.current;
         if (pending) void saveRemote(pending);
-      }, 60000);
+      }, 300000);
       return false;
     }
   }, [adminKey]);
 
-  const scheduleRemoteSave = useCallback((next: MaterialItem[]) => {
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current);
-    }
-    saveTimerRef.current = window.setTimeout(() => {
-      saveTimerRef.current = null;
-      void saveRemote(next);
-    }, 5000);
-  }, [saveRemote]);
-
   useEffect(() => () => {
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current);
-    }
     if (retryTimerRef.current) {
       window.clearTimeout(retryTimerRef.current);
     }
@@ -163,7 +158,13 @@ export function Materials({ data, adminKey, refresh }: Props) {
   const setAndSave = (next: MaterialItem[]) => {
     setItems(next);
     saveItems(next);
-    scheduleRemoteSave(next);
+    pendingSaveRef.current = next;
+    setSyncState("pending");
+  };
+
+  const syncNow = () => {
+    const pending = pendingSaveRef.current || items;
+    void saveRemote(pending);
   };
 
   const importRaw = () => {
@@ -326,6 +327,9 @@ export function Materials({ data, adminKey, refresh }: Props) {
             <TabsTrigger value="BAD">Không dùng được</TabsTrigger>
           </TabsList>
           <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant={syncState === "error" ? "destructive" : "secondary"} onClick={syncNow} disabled={syncState === "saving"}>
+              {syncState === "saving" ? "Đang đồng bộ..." : syncState === "synced" ? "Đã đồng bộ" : "Lưu lên Sheet"}
+            </Button>
             <Button size="sm" variant="outline" onClick={() => bulkUpdateStatus("NEW", "OK")} disabled={counts.NEW === 0}>
               Chuyển chưa phân loại sang OK
             </Button>
