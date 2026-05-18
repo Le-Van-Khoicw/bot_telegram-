@@ -70,10 +70,11 @@ async def notify_admins(text: str) -> None:
 
 
 def kb_after_delivery() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💬 Hỗ trợ", url=SUPPORT_TELE_LINK)],
-        [InlineKeyboardButton("⬅️ Menu", callback_data="back_main")],
-    ])
+    rows: List[List[InlineKeyboardButton]] = []
+    if SUPPORT_TELE_LINK:
+        rows.append([InlineKeyboardButton("💬 Hỗ trợ", url=SUPPORT_TELE_LINK)])
+    rows.append([InlineKeyboardButton("⬅️ Menu", callback_data="back_main")])
+    return InlineKeyboardMarkup(rows)
 
 ORDER_TTL_SECONDS = min(int(os.getenv("ORDER_TTL_SECONDS", "300")), 300)  # tối đa 5 phút
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
@@ -493,12 +494,14 @@ SUPPORT_TELE_LINK = os.getenv("SUPPORT_TELE_LINK", "https://t.me/khoivancw").str
 SUPPORT_ZALO_LINK = os.getenv("SUPPORT_ZALO_LINK", "https://zalo.me/0329279225").strip()
 
 def kb_support_only() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("💬 Hỗ trợ", url=SUPPORT_TELE_LINK),
-            InlineKeyboardButton("📱 Zalo", url=SUPPORT_ZALO_LINK),
-        ]
-    ])
+    row: List[InlineKeyboardButton] = []
+    if SUPPORT_TELE_LINK:
+        row.append(InlineKeyboardButton("💬 Hỗ trợ", url=SUPPORT_TELE_LINK))
+    if SUPPORT_ZALO_LINK:
+        row.append(InlineKeyboardButton("📱 Zalo", url=SUPPORT_ZALO_LINK))
+    if not row:
+        row.append(InlineKeyboardButton("⬅️ Menu", callback_data="back_main"))
+    return InlineKeyboardMarkup([row])
 
 def kb_delivered() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Menu", callback_data="back_main")]])

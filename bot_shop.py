@@ -1025,11 +1025,13 @@ def support_text() -> str:
 
 
 def support_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📱 Nhắn Zalo", url=SUPPORT_ZALO_LINK)],
-        [InlineKeyboardButton("✈️ Nhắn Telegram", url=SUPPORT_TELE_LINK)],
-        [InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")],
-    ])
+    rows: List[List[InlineKeyboardButton]] = []
+    if SUPPORT_ZALO_LINK:
+        rows.append([InlineKeyboardButton("📱 Nhắn Zalo", url=SUPPORT_ZALO_LINK)])
+    if SUPPORT_TELE_LINK:
+        rows.append([InlineKeyboardButton("✈️ Nhắn Telegram", url=SUPPORT_TELE_LINK)])
+    rows.append([InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")])
+    return InlineKeyboardMarkup(rows)
 
 
 def quick_actions_kb() -> InlineKeyboardMarkup:
@@ -1115,7 +1117,7 @@ def product_detail_kb(pid: str, ready_qty: int) -> InlineKeyboardMarkup:
     rows = []
     if ready_qty > 0:
         rows.append([InlineKeyboardButton("🛒 Mua ngay", callback_data=f"buy|{pid}")])
-    else:
+    elif SUPPORT_TELE_LINK:
         rows.append([InlineKeyboardButton("💬 Liên hệ hỗ trợ", url=SUPPORT_TELE_LINK)])
 
     rows.append([InlineKeyboardButton("⬅️ Quay lại menu sản phẩm", callback_data="back_products")])
