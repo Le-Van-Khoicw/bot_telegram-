@@ -681,8 +681,8 @@ def release_hold_by_order(order_id: str, mark_status: str) -> int:
             if res_cells:
                 _ws_res.update_cells(res_cells, value_input_option="USER_ENTERED")
 
+    set_order_fields(order_id, {"status": mark_status})
     if released:
-        set_order_fields(order_id, {"status": mark_status})
         invalidate_stock_cache()
     return released
 
@@ -2251,7 +2251,7 @@ async def release_overdue_pending_job(context: ContextTypes.DEFAULT_TYPE):
         remove_jobs_by_prefix(context.application, f"countdown_{order_id}")
         remove_jobs_by_prefix(context.application, f"ttl_{order_id}")
 
-        if user_id_s.isdigit():
+        if released and user_id_s.isdigit():
             user_id = int(user_id_s)
             if qr_msg_id_s.isdigit():
                 try:
@@ -2309,15 +2309,19 @@ async def restore_pending_jobs(app: Application):
         if remain <= 0:
             released = await gs_call(release_hold_by_order, order_id, "EXPIRED")
 
+            # dọn job cũ nếu có (phòng trường hợp trùng)
+            remove_jobs_by_prefix(app, f"countdown_{order_id}")
+            remove_jobs_by_prefix(app, f"ttl_{order_id}")
+
+            if not released:
+                continue
+
             # xoá tin QR nếu có
             if qr_msg_id_s.isdigit():
                 try:
                     await app.bot.delete_message(chat_id=user_id, message_id=int(qr_msg_id_s))
                 except Exception:
                     pass
-
-            # dọn job cũ nếu có (phòng trường hợp trùng)
-            remove_jobs_by_prefix(app, f"countdown_{order_id}")
 
             try:
                 await app.bot.send_message(
