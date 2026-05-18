@@ -98,7 +98,7 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
             </TableHeader>
             <TableBody>
               {visible.map((o) => (
-                <TableRow key={text(o.order_id)}>
+                <TableRow key={text(o.order_id)} id={`order-${text(o.order_id)}`} className="transition-colors">
                   <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{text(o.order_id)}</code></TableCell>
                   <TableCell className="text-sm text-muted-foreground">{text(o.user_id)}</TableCell>
                   <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{text(o.stock_code)}</code></TableCell>

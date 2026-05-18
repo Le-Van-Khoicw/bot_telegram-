@@ -3,6 +3,7 @@ import { Bell, RefreshCw } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { AdminLogin } from "./components/AdminLogin";
 import { NAV_ITEMS, Sidebar, type AdminSection } from "./components/Sidebar";
+import { NotificationPanel, type Notification } from "./components/NotificationPanel";
 import { Overview } from "./components/sections/Overview";
 import { Products } from "./components/sections/Products";
 import { Inventory } from "./components/sections/Inventory";
@@ -25,6 +26,17 @@ export default function App() {
   const [newCount, setNewCount] = useState(0);
   const [inventoryPreset, setInventoryPreset] = useState<{ status?: string; stockCode?: string; nonce: number }>({ nonce: 0 });
   const [orderPreset, setOrderPreset] = useState<{ status?: string; nonce: number }>({ nonce: 0 });
+
+  // ✅ NEW: Notification management
+  const [notifications, setNotifications] = useState<Notification[]>(() => {
+    try {
+      const saved = localStorage.getItem("notifications");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [notifPanelOpen, setNotifPanelOpen] = useState(false);
 
   const seenOrdersRef = useRef<Set<string>>(new Set());
   const deliveredRef = useRef<Set<string>>(new Set());
@@ -75,6 +87,8 @@ export default function App() {
     }
 
     if (initializedRef.current) {
+      const newNotifications: Notification[] = [];
+
       if (newOrders.length) {
         setNewCount((n) => n + newOrders.length);
         playNotifySound();
@@ -83,6 +97,20 @@ export default function App() {
           description: `${text(first.stock_code)} - ${money(first.total)} - ${text(first.order_id)}`,
           duration: 7000,
         });
+
+        // ✅ Add to notifications
+        for (const order of newOrders) {
+          newNotifications.push({
+            id: `notif-${Date.now()}-${Math.random()}`,
+            type: "new_order",
+            orderId: text(order.order_id),
+            stockCode: text(order.stock_code),
+            total: parseInt(text(order.total)) || 0,
+            userId: text(order.user_id),
+            createdAt: text(order.created_at),
+            timestamp: Date.now(),
+          });
+        }
       }
 
       if (deliveredOrders.length) {
@@ -92,6 +120,29 @@ export default function App() {
         toast(`Đã giao ${deliveredOrders.length} đơn`, {
           description: `${text(first.stock_code)} - ${money(first.total)} - ${text(first.order_id)}`,
           duration: 7000,
+        });
+
+        // ✅ Add to notifications
+        for (const order of deliveredOrders) {
+          newNotifications.push({
+            id: `notif-${Date.now()}-${Math.random()}`,
+            type: "delivered",
+            orderId: text(order.order_id),
+            stockCode: text(order.stock_code),
+            total: parseInt(text(order.total)) || 0,
+            userId: text(order.user_id),
+            createdAt: text(order.created_at),
+            timestamp: Date.now(),
+          });
+        }
+      }
+
+      // ✅ Update notifications state and localStorage
+      if (newNotifications.length) {
+        setNotifications((prev) => {
+          const updated = [...newNotifications, ...prev].slice(0, 100); // Keep max 100
+          localStorage.setItem("notifications", JSON.stringify(updated));
+          return updated;
         });
       }
     }
@@ -155,6 +206,21 @@ export default function App() {
     deliveredRef.current = new Set();
   };
 
+  // ✅ NEW: Handle notification selection
+  const handleSelectNotification = (orderId: string) => {
+    setOrderPreset({ status: undefined, nonce: Date.now() });
+    setSection("orders");
+    // Scroll to selected order (optional, can be improved)
+    setTimeout(() => {
+      const orderElement = document.getElementById(`order-${orderId}`);
+      if (orderElement) {
+        orderElement.scrollIntoView({ behavior: "smooth", block: "center" });
+        orderElement.classList.add("bg-yellow-100");
+        setTimeout(() => orderElement.classList.remove("bg-yellow-100"), 2000);
+      }
+    }, 100);
+  };
+
   if (!isAuthenticated) {
     return <AdminLogin onLogin={handleLogin} />;
   }
@@ -189,6 +255,14 @@ export default function App() {
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <Toaster richColors position="top-right" />
+      {/* ✅ NEW: Notification Panel */}
+      <NotificationPanel
+        notifications={notifications}
+        open={notifPanelOpen}
+        onClose={() => setNotifPanelOpen(false)}
+        onSelectOrder={handleSelectNotification}
+        newCount={newCount}
+      />
       <Sidebar active={section} onChange={(next) => { setSection(next); setNewCount(0); }} onLogout={handleLogout} />
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-7xl mx-auto px-4 py-6 pt-16 md:pt-6">
@@ -199,9 +273,14 @@ export default function App() {
             </div>
             <div className="flex flex-wrap gap-2">
               {newCount > 0 && (
-                <Button size="sm" variant="secondary" className="gap-2" onClick={() => setNewCount(0)}>
+                <Button size="sm" variant="secondary" className="gap-2 relative" onClick={() => setNotifPanelOpen(true)}>
                   <Bell size={15} />
                   {newCount} thông báo mới
+                  {newCount > 0 && (
+                    <span className="absolute top-0 right-0 -mt-1 -mr-1 w-4 h-4 bg-red-600 text-white text-xs font-bold rounded-full flex items-center justify-center">
+                      {newCount > 9 ? "9+" : newCount}
+                    </span>
+                  )}
                 </Button>
               )}
               <Button size="sm" variant="outline" className="gap-2" onClick={() => refresh()} disabled={loading}>
