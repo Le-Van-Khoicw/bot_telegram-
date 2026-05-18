@@ -39,7 +39,12 @@ def _materials_ws():
     try:
         ws = shop._gs_sheet.worksheet(MATERIALS_TAB)
     except Exception:
-        ws = shop._gs_sheet.add_worksheet(title=MATERIALS_TAB, rows=1000, cols=len(MATERIALS_HEADERS))
+        try:
+            ws = shop._gs_sheet.add_worksheet(title=MATERIALS_TAB, rows=1000, cols=len(MATERIALS_HEADERS))
+        except Exception as exc:
+            if "already exists" not in str(exc).lower():
+                raise
+            ws = shop._gs_sheet.worksheet(MATERIALS_TAB)
         ws.update("A1:F1", [MATERIALS_HEADERS], value_input_option="USER_ENTERED")
         return ws
 

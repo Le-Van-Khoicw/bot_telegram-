@@ -161,6 +161,13 @@ export function Materials({ data, adminKey, refresh }: Props) {
     setAndSave(items.map((item) => item.id === id ? { ...item, status } : item));
   };
 
+  const bulkUpdateStatus = (from: MaterialStatus, to: MaterialStatus) => {
+    const changed = items.filter((item) => item.status === from).length;
+    if (!changed) return toast.info("Không có dòng nào để chuyển");
+    setAndSave(items.map((item) => item.status === from ? { ...item, status: to } : item));
+    toast.success(`Đã chuyển ${changed} dòng sang ${to === "OK" ? "OK" : "Lỗi"}`);
+  };
+
   const clearStatus = (status?: MaterialStatus) => {
     const next = status ? items.filter((item) => item.status !== status) : [];
     setAndSave(next);
@@ -200,21 +207,26 @@ export function Materials({ data, adminKey, refresh }: Props) {
 
   const renderRows = (status: MaterialStatus) => {
     const visible = items.filter((item) => item.status === status);
+    const rowClass = status === "OK"
+      ? "bg-emerald-50/70 hover:bg-emerald-50"
+      : status === "BAD"
+        ? "bg-rose-50/70 hover:bg-rose-50"
+        : "";
     return (
       <Card className="shadow-sm">
         <CardContent className="p-0 overflow-x-auto">
           <Table className="min-w-[760px]">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[90px]">Trạng thái</TableHead>
+                <TableHead className="w-[70px]">STT</TableHead>
                 <TableHead>Nguyên liệu</TableHead>
                 <TableHead className="w-[300px] text-right">Thao tác</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visible.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell><StatusBadge status={item.status} /></TableCell>
+              {visible.map((item, index) => (
+                <TableRow key={item.id} className={rowClass}>
+                  <TableCell className="font-mono text-xs text-muted-foreground">{index + 1}</TableCell>
                   <TableCell
                     className="font-mono text-xs max-w-[520px] truncate cursor-pointer select-none active:bg-muted"
                     title="Chạm để copy"
@@ -285,21 +297,25 @@ export function Materials({ data, adminKey, refresh }: Props) {
       </Card>
 
       <Tabs defaultValue="NEW">
-        <TabsList>
-          <TabsTrigger value="NEW">Chưa phân loại</TabsTrigger>
-          <TabsTrigger value="OK">Dùng được</TabsTrigger>
-          <TabsTrigger value="BAD">Không dùng được</TabsTrigger>
-        </TabsList>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TabsList>
+            <TabsTrigger value="NEW">Chưa phân loại</TabsTrigger>
+            <TabsTrigger value="OK">Dùng được</TabsTrigger>
+            <TabsTrigger value="BAD">Không dùng được</TabsTrigger>
+          </TabsList>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => bulkUpdateStatus("NEW", "OK")} disabled={counts.NEW === 0}>
+              Chuyển chưa phân loại sang OK
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => bulkUpdateStatus("NEW", "BAD")} disabled={counts.NEW === 0}>
+              Chuyển chưa phân loại sang Lỗi
+            </Button>
+          </div>
+        </div>
         <TabsContent value="NEW" className="pt-3">{renderRows("NEW")}</TabsContent>
         <TabsContent value="OK" className="pt-3">{renderRows("OK")}</TabsContent>
         <TabsContent value="BAD" className="pt-3">{renderRows("BAD")}</TabsContent>
       </Tabs>
     </div>
   );
-}
-
-function StatusBadge({ status }: { status: MaterialStatus }) {
-  if (status === "OK") return <Badge>OK</Badge>;
-  if (status === "BAD") return <Badge variant="destructive">Lỗi</Badge>;
-  return <Badge variant="secondary">Mới</Badge>;
 }
