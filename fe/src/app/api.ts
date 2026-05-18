@@ -29,8 +29,15 @@ export async function adminApi<T>(path: string, key: string, options: RequestIni
     ...options,
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    const body = await res.text();
+    let message = body;
+    try {
+      const parsed = JSON.parse(body);
+      message = parsed.detail || parsed.message || body;
+    } catch {
+      // Keep the raw body when the server did not return JSON.
+    }
+    throw new Error(message || `HTTP ${res.status}`);
   }
   return res.json();
 }

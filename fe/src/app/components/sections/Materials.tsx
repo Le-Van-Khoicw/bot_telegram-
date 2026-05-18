@@ -66,6 +66,9 @@ export function Materials({ data, adminKey, refresh }: Props) {
   const [busy, setBusy] = useState(false);
   const [loadedRemote, setLoadedRemote] = useState(false);
   const saveTimerRef = useRef<number | null>(null);
+  const retryTimerRef = useRef<number | null>(null);
+  const pendingSaveRef = useRef<MaterialItem[] | null>(null);
+  const warnedSaveErrorRef = useRef(false);
 
   const productCodes = useMemo(() => {
     const codes = (data?.products || []).map((p) => text(p.stock_code)).filter((x) => x !== "—");
@@ -78,7 +81,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
     BAD: items.filter((x) => x.status === "BAD").length,
   }), [items]);
 
-  const saveRemote = useCallback(async (next: MaterialItem[]) => {
+  const saveRemote = useCallback(async (next: MaterialItem[]): Promise<boolean> => {
     try {
       const result = await adminApi<{ items?: any[] }>("/admin/api/materials", adminKey, {
         method: "POST",
@@ -91,8 +94,24 @@ export function Materials({ data, adminKey, refresh }: Props) {
           saveItems(synced);
         }
       }
+      pendingSaveRef.current = null;
+      warnedSaveErrorRef.current = false;
+      return true;
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Không lưu được nguyên liệu lên server");
+      pendingSaveRef.current = next;
+      if (!warnedSaveErrorRef.current) {
+        warnedSaveErrorRef.current = true;
+        toast.warning("Đã lưu tạm trên máy. Google Sheet đang bận, web sẽ tự sync lại sau.");
+      }
+      if (retryTimerRef.current) {
+        window.clearTimeout(retryTimerRef.current);
+      }
+      retryTimerRef.current = window.setTimeout(() => {
+        retryTimerRef.current = null;
+        const pending = pendingSaveRef.current;
+        if (pending) void saveRemote(pending);
+      }, 60000);
+      return false;
     }
   }, [adminKey]);
 
@@ -103,12 +122,15 @@ export function Materials({ data, adminKey, refresh }: Props) {
     saveTimerRef.current = window.setTimeout(() => {
       saveTimerRef.current = null;
       void saveRemote(next);
-    }, 2500);
+    }, 5000);
   }, [saveRemote]);
 
   useEffect(() => () => {
     if (saveTimerRef.current) {
       window.clearTimeout(saveTimerRef.current);
+    }
+    if (retryTimerRef.current) {
+      window.clearTimeout(retryTimerRef.current);
     }
   }, []);
 
