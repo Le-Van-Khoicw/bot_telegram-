@@ -105,6 +105,9 @@ _ws_ful = None
 
 PENDING_QTY: Dict[int, Dict[str, Any]] = {}  # user_id -> {"product_id": ...}
 
+# ✅ Cache for qty selections to avoid long callback_data (Telegram limit 64 bytes)
+SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}  # session_id -> {"pid": ..., "qty": ...}
+
 # ================== HELPERS ==================
 _CACHE = {
     "products": {"ts": 0.0, "data": []},
@@ -1026,12 +1029,17 @@ def qty_select_text(p: Dict[str, Any]) -> str:
     )
 
 def qty_select_kb(pid: str) -> InlineKeyboardMarkup:
+    # ✅ FIX: Use short session ID instead of long callback_data to avoid 64-byte limit
+    import uuid
+    session_id = str(uuid.uuid4())[:8]
+    SELECTED_QTY_CACHE[session_id] = {"pid": pid}
+
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("1", callback_data=f"qty|{pid}|1"),
-         InlineKeyboardButton("2", callback_data=f"qty|{pid}|2")],
-        [InlineKeyboardButton("5", callback_data=f"qty|{pid}|5"),
-         InlineKeyboardButton("10", callback_data=f"qty|{pid}|10")],
-        [InlineKeyboardButton("✏️ Tùy chỉnh", callback_data=f"qtycustom|{pid}")],
+        [InlineKeyboardButton("1", callback_data=f"qty|{session_id}|1"),
+         InlineKeyboardButton("2", callback_data=f"qty|{session_id}|2")],
+        [InlineKeyboardButton("5", callback_data=f"qty|{session_id}|5"),
+         InlineKeyboardButton("10", callback_data=f"qty|{session_id}|10")],
+        [InlineKeyboardButton("✏️ Tùy chỉnh", callback_data=f"qtycustom|{session_id}")],
         [InlineKeyboardButton("⬅️ Quay lại", callback_data=f"pdetail_back|{pid}")],
     ])
 
@@ -2213,7 +2221,7 @@ def status_emoji(status: str) -> str:
 
 async def show_orders(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     try:
-        orders = await gs_call(list_user_orders, user_id, 10)
+        orders = await gs_call(list_user_orders, user_id, 50)  # ✅ Increase limit to 50
     except Exception as e:
         logger.exception("show_orders error")
         await context.bot.send_message(
@@ -2231,10 +2239,10 @@ async def show_orders(user_id: int, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    lines = ["📦 *ĐƠN HÀNG ĐÃ MUA*\n", "Danh sách 5 đơn gần nhất:\n", "━━━━━━━━━━━━━━━━"]
+    lines = ["📦 *ĐƠN HÀNG ĐÃ MUA*\n", "Danh sách 10 đơn gần nhất:\n", "━━━━━━━━━━━━━━━━"]
     kb_rows = []
 
-    for o in orders[:5]:
+    for o in orders[:10]:  # ✅ Show first 10 instead of 5
         oid = o.get("order_id", "")
         sc = o.get("stock_code", "")
         qty = o.get("qty", "")
@@ -2439,11 +2447,23 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await ask_qty(update, context, pid)
 
     if data.startswith("qty|"):
-        _, pid, qty_s = data.split("|", 2)
+        # ✅ FIX: Extract from session cache instead of callback_data
+        _, session_id, qty_s = data.split("|", 2)
+        cached = SELECTED_QTY_CACHE.pop(session_id, {})
+        pid = cached.get("pid", "")
+        if not pid:
+            await q.answer("❌ Session hết hạn, vui lòng chọn lại.", show_alert=True)
+            return
         return await qty_chosen(update, context, pid, int(qty_s))
 
     if data.startswith("qtycustom|"):
-        pid = data.split("|", 1)[1]
+        # ✅ FIX: Extract from session cache instead of callback_data
+        session_id = data.split("|", 1)[1]
+        cached = SELECTED_QTY_CACHE.pop(session_id, {})
+        pid = cached.get("pid", "")
+        if not pid:
+            await q.answer("❌ Session hết hạn, vui lòng chọn lại.", show_alert=True)
+            return
         return await set_custom_qty_prompt(update, context, pid)
 
     if data.startswith("confirm|"):
