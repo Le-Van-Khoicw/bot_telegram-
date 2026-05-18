@@ -1997,6 +1997,24 @@ async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order
             preview_md = "\n".join(secrets_md[:preview_n]) if secrets_md else "(trống)"
             more_count = max(0, len(secrets_md) - preview_n)
 
+            direct_text = (
+                "✅ ĐƠN ĐÃ GIAO — GỬI LẠI\n"
+                f"🧾 Mã đơn: {order_id}\n"
+                f"📦 SP: {stock_code}\n"
+                f"🔢 SL: {qty_val}\n"
+                f"⏱ Thời gian: {delivered_at}\n"
+                "====================\n"
+                "🎁 THÔNG TIN NHẬN ĐƯỢC - BẤM GIỮ ĐỂ COPY:\n"
+                + "\n".join([f"{i}) {s}" for i, s in enumerate(secrets_plain, start=1)])
+            )
+            for start in range(0, len(direct_text), 3800):
+                await context.bot.send_message(
+                    chat_id=q.from_user.id,
+                    text=direct_text[start:start + 3800],
+                    reply_markup=main_menu_keyboard() if start + 3800 >= len(direct_text) else None,
+                    disable_web_page_preview=True,
+                )
+
             content = (
                 f"ORDER: {order_id}\n"
                 f"PRODUCT: {stock_code}\n"
@@ -2021,7 +2039,7 @@ async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order
                     "👀 *Preview (1–2 dòng):*\n"
                     f"{preview_md}\n"
                     f"{'…' if more_count > 0 else ''}\n\n"
-                    "📎 *Xem đầy đủ trong file .txt đính kèm*."
+                    "📎 *File .txt dự phòng, nội dung đầy đủ đã gửi ở tin nhắn phía trên*."
                 ),
                 parse_mode="Markdown",
                 reply_markup=main_menu_keyboard(),
@@ -2126,6 +2144,24 @@ async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order
         preview_md = "\n".join(secrets_md[:preview_n]) if secrets_md else "(trống)"
         more_count = max(0, len(secrets_md) - preview_n)
 
+        direct_text = (
+            "✅ MUA HÀNG THÀNH CÔNG\n"
+            f"🧾 Mã đơn: {order_id}\n"
+            f"📦 SP: {stock_code}\n"
+            f"🔢 SL: {qty_val}\n"
+            f"⏱ Thời gian: {delivered_at}\n"
+            "====================\n"
+            "🎁 THÔNG TIN NHẬN ĐƯỢC - BẤM GIỮ ĐỂ COPY:\n"
+            + deliver_text_plain
+        )
+        for start in range(0, len(direct_text), 3800):
+            await context.bot.send_message(
+                chat_id=q.from_user.id,
+                text=direct_text[start:start + 3800],
+                reply_markup=main_menu_keyboard() if start + 3800 >= len(direct_text) else None,
+                disable_web_page_preview=True,
+            )
+
         content = (
             f"ORDER: {order_id}\n"
             f"PRODUCT: {stock_code}\n"
@@ -2150,7 +2186,7 @@ async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order
                 "👀 *Preview (1–2 dòng):*\n"
                 f"{preview_md}\n"
                 f"{'…' if more_count > 0 else ''}\n\n"
-                "📎 *Xem đầy đủ trong file .txt đính kèm* (bấm để copy nhanh).\n"
+                "📎 *File .txt dự phòng, nội dung đầy đủ đã gửi ở tin nhắn phía trên*.\n"
                 "🔐 Nếu là tài khoản, vui lòng *đổi mật khẩu ngay* sau khi đăng nhập."
             ),
             parse_mode="Markdown",
