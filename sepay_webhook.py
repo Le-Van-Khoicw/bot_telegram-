@@ -577,28 +577,47 @@ async def send_delivery_message(user_id: int, order_id: str, stock_code: str, qt
     bio.name = f"{order_id}.txt"
     bio.seek(0)
 
-    # 1) GỬI FILE TRƯỚC (KHÔNG caption, KHÔNG parse_mode) => cực ổn định
+    # 1) GỬI FILE TRƯỚC. Caption để plain text để tránh lỗi Markdown làm rớt file.
     try:
         caption_doc = (
-            "✅ *MUA HÀNG THÀNH CÔNG*\n\n"
-            f"🧾 Mã đơn: `{order_id}`\n\n"
-            f"📦 SP: `{stock_code}`\n\n"
-            f"🔢 SL: *{qty}*\n\n\n"
+            "✅ MUA HÀNG THÀNH CÔNG\n\n"
+            f"🧾 Mã đơn: {order_id}\n\n"
+            f"📦 SP: {stock_code}\n\n"
+            f"🔢 SL: {qty}\n\n\n"
             "📄 File .txt chứa đầy đủ thông tin ở đây (bấm để tải & copy nhanh).\n\n"
             "🔐 Nếu là tài khoản, vui lòng đổi mật khẩu ngay sau khi đăng nhập.\n\n"
-            "❗ Nếu tài khoản lỗi/không đăng nhập được hoặc có vấn đề, hãy bấm *Hỗ trợ* bên dưới."
+            "❗ Nếu tài khoản lỗi/không đăng nhập được hoặc có vấn đề, hãy bấm Hỗ trợ bên dưới."
 )
         await tg_bot.send_document(
             chat_id=user_id,
             document=bio,
             caption=caption_doc,
-            parse_mode=ParseMode.MARKDOWN,
             reply_markup=kb_support_only(),   # <-- thêm nút Hỗ trợ ngay ở tin nhắn file
 )
         return True
     except Exception as e:
         logger.exception("send_document FAILED (order=%s): %s", order_id, e)
-        return False
+        try:
+            fallback = (
+                "✅ MUA HÀNG THÀNH CÔNG\n\n"
+                f"🧾 Mã đơn: {order_id}\n"
+                f"📦 SP: {stock_code}\n"
+                f"🔢 SL: {qty}\n\n"
+                "🎁 Thông tin nhận được:\n"
+                f"{chr(10).join(lines_plain)}\n\n"
+                "Nếu tài khoản lỗi/không đăng nhập được, bấm Hỗ trợ bên dưới."
+            )
+            for start in range(0, len(fallback), 3900):
+                await tg_bot.send_message(
+                    chat_id=user_id,
+                    text=fallback[start:start + 3900],
+                    reply_markup=kb_support_only() if start + 3900 >= len(fallback) else None,
+                    disable_web_page_preview=True,
+                )
+            return True
+        except Exception as fallback_error:
+            logger.exception("send delivery fallback FAILED (order=%s): %s", order_id, fallback_error)
+            return False
 
 def parse_sepay_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     desc = (payload.get("description") or payload.get("content") or "").strip()

@@ -34,8 +34,7 @@ def telegram_webhook_path() -> str:
     return "/webhook/telegram"
 
 
-@app.post("/webhook/sepay")
-async def sepay_webhook(request: Request):
+async def handle_sepay_webhook(request: Request):
     if not verify_sepay_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     try:
@@ -44,6 +43,16 @@ async def sepay_webhook(request: Request):
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/webhook/sepay")
+async def sepay_webhook(request: Request):
+    return await handle_sepay_webhook(request)
+
+
+@app.post("/")
+async def sepay_root_fallback(request: Request):
+    return await handle_sepay_webhook(request)
 
 
 @app.post(telegram_webhook_path())
