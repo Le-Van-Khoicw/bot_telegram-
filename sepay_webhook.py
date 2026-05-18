@@ -195,6 +195,7 @@ def now_str() -> str:
 
 def verify_sepay_auth(request: Request) -> bool:
     if not SEPAY_API_KEY:
+        logger.warning("⚠️ SEPAY_API_KEY not set, allowing all requests")
         return True
 
     # SePay có thể gửi nhiều dạng header
@@ -205,13 +206,25 @@ def verify_sepay_auth(request: Request) -> bool:
         or ""
     ).strip()
 
+    # Log auth header (masked for security)
+    if auth:
+        masked = auth[:10] + "***" if len(auth) > 10 else "***"
+        logger.info(f"🔐 Auth header received: {masked}")
+    else:
+        logger.warning("⚠️ No auth header found")
+        return False
+
     # Format: Apikey <KEY>
     if auth.lower().startswith("apikey "):
         key = auth.split(" ", 1)[1].strip()
-        return key == SEPAY_API_KEY
+        is_valid = key == SEPAY_API_KEY
+        logger.info(f"🔑 API Key format: Valid={is_valid}")
+        return is_valid
 
     # Trường hợp gửi raw key
-    return auth == SEPAY_API_KEY
+    is_valid = auth == SEPAY_API_KEY
+    logger.info(f"🔑 Raw key format: Valid={is_valid}")
+    return is_valid
 
 # def init_gsheet() -> None:
 #     global gs_client, gs_sheet, ws_orders, ws_pool, ws_res, ws_ful
