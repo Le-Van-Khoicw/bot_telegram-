@@ -1,3 +1,4 @@
+import logging
 import random
 import string
 from typing import Any, Dict, List
@@ -8,6 +9,7 @@ import bot_shop as shop
 
 MATERIALS_TAB = "MATERIALS"
 MATERIALS_HEADERS = ["id", "value", "status", "note", "created_at", "updated_at"]
+logger = logging.getLogger("admin_services")
 
 
 def _records(ws) -> List[Dict[str, str]]:
@@ -87,8 +89,18 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
     if len(rows) == 1 and existing_items and not force_clear:
         return {"ok": True, "saved": len(existing_items), "items": load_materials(), "skipped_empty_save": True}
 
-    ws.clear()
-    ws.update(f"A1:F{len(rows)}", rows, value_input_option="USER_ENTERED")
+    try:
+        ws.resize(rows=max(len(rows), 1000), cols=len(MATERIALS_HEADERS))
+    except Exception as exc:
+        logger.warning("resize MATERIALS sheet failed: %s", exc)
+
+    try:
+        ws.clear()
+        ws.update(f"A1:F{len(rows)}", rows, value_input_option="RAW")
+    except Exception as exc:
+        logger.exception("save_materials failed: rows=%s force_clear=%s", len(rows) - 1, force_clear)
+        raise RuntimeError(f"Không lưu được MATERIALS: {exc}") from exc
+
     return {"ok": True, "saved": len(rows) - 1, "items": load_materials()}
 
 

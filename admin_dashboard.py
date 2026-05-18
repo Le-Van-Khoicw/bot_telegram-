@@ -491,4 +491,7 @@ def register_admin_routes(app: FastAPI) -> None:
     @app.post("/admin/api/materials")
     async def admin_save_materials(request: Request):
         require_admin(request)
-        return await asyncio.to_thread(save_materials, await request.json())
+        try:
+            return await asyncio.to_thread(save_materials, await request.json())
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
