@@ -81,7 +81,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
     try {
       const result = await adminApi<{ items?: any[] }>("/admin/api/materials", adminKey, {
         method: "POST",
-        body: JSON.stringify({ items: next }),
+        body: JSON.stringify({ items: next, force_clear: next.length === 0 }),
       });
       if (result.items) {
         const synced = normalizeItems(result.items);

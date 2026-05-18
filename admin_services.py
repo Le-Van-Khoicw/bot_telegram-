@@ -58,6 +58,8 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
     raw_items = data.get("items") or []
     if not isinstance(raw_items, list):
         raise ValueError("items must be a list")
+    force_clear = bool(data.get("force_clear"))
+    existing_items = _records(ws)
 
     now = shop.now_str()
     rows = [MATERIALS_HEADERS]
@@ -81,6 +83,9 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
             str(raw.get("created_at") or now),
             now,
         ])
+
+    if len(rows) == 1 and existing_items and not force_clear:
+        return {"ok": True, "saved": len(existing_items), "items": load_materials(), "skipped_empty_save": True}
 
     ws.clear()
     ws.update(f"A1:F{len(rows)}", rows, value_input_option="USER_ENTERED")
