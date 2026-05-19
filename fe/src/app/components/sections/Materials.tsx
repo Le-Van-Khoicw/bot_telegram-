@@ -28,8 +28,11 @@ function makeId() {
 
 function loadItems(): MaterialItem[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored !== null) {
+      const parsed = JSON.parse(stored);
+      return Array.isArray(parsed) ? parsed : [];
+    }
 
     const backup = JSON.parse(localStorage.getItem(BACKUP_KEY) || "[]");
     return Array.isArray(backup) ? backup : [];
@@ -42,6 +45,8 @@ function saveItems(items: MaterialItem[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   if (items.length > 0) {
     localStorage.setItem(BACKUP_KEY, JSON.stringify(items));
+  } else {
+    localStorage.removeItem(BACKUP_KEY);
   }
 }
 
@@ -84,9 +89,6 @@ export function Materials({ data, adminKey, refresh }: Props) {
 
   const applyRemoteItems = useCallback((rows: any[] | undefined, allowEmpty = false) => {
     const synced = normalizeItems(rows || []);
-    if (synced.length === 0 && !allowEmpty && loadItems().length > 0) {
-      return;
-    }
     setItems(synced);
     saveItems(synced);
   }, []);
@@ -233,12 +235,23 @@ export function Materials({ data, adminKey, refresh }: Props) {
     toast.success(`Đã chuyển ${changed} dòng sang ${to === "OK" ? "OK" : "Lỗi"}`);
   };
 
-  const clearStatus = (status?: MaterialStatus) => {
+  const clearStatus = async (status?: MaterialStatus) => {
     const next = status ? items.filter((item) => item.status !== status) : [];
     const deletedIds = status
       ? items.filter((item) => item.status === status).map((item) => item.id)
       : items.map((item) => item.id);
-    setAndSave(next, { upsertItems: [], deletedIds, forceClear: !status });
+    if (!deletedIds.length) return;
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    const options = { upsertItems: next, deletedIds, forceClear: !status || next.length === 0 };
+    setItems(next);
+    saveItems(next);
+    pendingSaveRef.current = next;
+    pendingOptionsRef.current = options;
+    const saved = await saveRemote(next, options);
+    if (saved) toast.success(`Đã xóa ${deletedIds.length} dòng`);
   };
 
   const copyItems = async (status: MaterialStatus) => {
