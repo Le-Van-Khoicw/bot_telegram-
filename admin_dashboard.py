@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from typing import Any, Dict
 
@@ -9,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from admin_services import add_stock, load_materials, release_holds, release_order, save_materials, save_product, snapshot, update_order, update_stock_item
 from mail_reader import MailReaderError, check_gpt_plus_mail
 
+logger = logging.getLogger("admin_dashboard")
 
 ADMIN_HTML = """<!doctype html>
 <html lang="vi">
@@ -509,7 +511,8 @@ def register_admin_routes(app: FastAPI) -> None:
             items = await asyncio.to_thread(load_materials)
             return {"ok": True, "items": items}
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            logger.exception("admin_get_materials failed")
+            return {"ok": False, "error": str(exc), "source": "materials"}
 
     @app.post("/admin/api/gpt-plus-check")
     async def admin_gpt_plus_check(request: Request):
