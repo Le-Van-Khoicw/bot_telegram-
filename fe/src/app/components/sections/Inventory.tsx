@@ -245,9 +245,10 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                       <Badge variant="outline">{addData.split(/\r?\n/).filter((line) => line.trim()).length} dòng</Badge>
                     </div>
                     <Textarea
-                      className="min-h-32 font-mono text-xs"
+                      className="h-40 min-h-40 overflow-auto whitespace-pre font-mono text-xs [field-sizing:fixed]"
                       placeholder="Mỗi dòng là 1 account/secret"
                       value={addData}
+                      wrap="off"
                       onChange={(e) => setAddData(e.target.value)}
                     />
                   </div>
@@ -260,9 +261,10 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                       </Button>
                     </div>
                     <Textarea
-                      className="min-h-32 font-mono text-xs"
+                      className="h-40 min-h-40 overflow-auto whitespace-pre font-mono text-xs [field-sizing:fixed]"
                       placeholder="Dòng trùng sẽ hiện ở đây sau khi thêm"
                       value={duplicateData}
+                      wrap="off"
                       onChange={(e) => setDuplicateData(e.target.value)}
                     />
                   </div>
