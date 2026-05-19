@@ -7,7 +7,7 @@ import { Badge } from "../ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { Warehouse, Plus, RotateCcw } from "lucide-react";
+import { Warehouse, Plus, RotateCcw, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi, text, type AdminSnapshot } from "../../api";
 
@@ -20,10 +20,16 @@ interface Props {
 
 const normalizeCode = (value: any) => text(value).trim().toUpperCase();
 const isRealCode = (value: string) => value !== "—" && value !== "â€”";
+const stockItemKey = (value: any) => {
+  const rawValue = String(value || "").trim();
+  const firstPart = rawValue.split("|")[0]?.split("----")[0]?.trim() || rawValue;
+  return firstPart.toLowerCase();
+};
 
 export function Inventory({ data, adminKey, refresh, preset }: Props) {
   const [addCode, setAddCode] = useState("");
   const [addData, setAddData] = useState("");
+  const [duplicateData, setDuplicateData] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [filterCode, setFilterCode] = useState("ALL");
   const [releaseOrderId, setReleaseOrderId] = useState("");
@@ -59,15 +65,51 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
   }, [preset?.nonce, preset?.status, preset?.stockCode]);
 
   const addStock = async () => {
+    const lines = addData.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (!lines.length) return;
+    const stockKeys = new Set((data?.pool || []).map((row) => stockItemKey(row.secret)).filter(Boolean));
+    const seenKeys = new Set<string>();
+    const cleanLines: string[] = [];
+    const duplicateLines: string[] = [];
+
+    lines.forEach((line) => {
+      const key = stockItemKey(line);
+      if (stockKeys.has(key) || seenKeys.has(key)) {
+        duplicateLines.push(line);
+        return;
+      }
+      seenKeys.add(key);
+      cleanLines.push(line);
+    });
+
+    if (!cleanLines.length) {
+      setAddData("");
+      setDuplicateData(duplicateLines.join("\n"));
+      toast.warning(`Không thêm dòng nào. Đã lọc ${duplicateLines.length} dòng trùng.`);
+      return;
+    }
+
     setBusy(true);
     try {
-      await adminApi("/admin/api/stock", adminKey, { method: "POST", body: JSON.stringify({ stock_code: addCode, items: addData }) });
+      const result = await adminApi<{ added: number; skipped_duplicates?: string[] }>("/admin/api/stock", adminKey, {
+        method: "POST",
+        body: JSON.stringify({ stock_code: addCode, items: cleanLines.join("\n") }),
+      });
+      const duplicates = [...duplicateLines, ...(result.skipped_duplicates || [])];
       setAddData("");
-      toast.success("Đã thêm stock vào kho");
+      setDuplicateData(duplicates.join("\n"));
+      const duplicateMessage = duplicates.length ? `, lọc trùng ${duplicates.length} dòng` : "";
+      toast.success(`Đã thêm ${result.added ?? cleanLines.length} dòng vào kho${duplicateMessage}`);
       await refresh();
     } finally {
       setBusy(false);
     }
+  };
+
+  const copyDuplicateData = async () => {
+    if (!duplicateData.trim()) return toast.info("Không có dòng trùng để copy");
+    await navigator.clipboard.writeText(duplicateData);
+    toast.success("Đã copy dòng trùng");
   };
 
   const releaseHeld = async () => {
@@ -179,18 +221,53 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
         </TabsContent>
 
         <TabsContent value="add" className="space-y-3 pt-2">
-          <Card className="shadow-sm max-w-2xl">
+          <Card className="shadow-sm max-w-5xl">
             <CardContent className="p-4 space-y-3">
-              <Select value={addCode || "__custom"} onValueChange={(value) => setAddCode(value === "__custom" ? "" : value)}>
-                <SelectTrigger><SelectValue placeholder="Chọn stock code có sẵn" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__custom">Nhập mã khác</SelectItem>
-                  {productCodes.map((code) => <SelectItem key={code} value={code}>{code}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Input placeholder="Stock code, ví dụ GPT1M" value={addCode} onChange={(e) => setAddCode(e.target.value.toUpperCase())} />
-              <Textarea placeholder="Mỗi dòng là 1 account/secret" value={addData} onChange={(e) => setAddData(e.target.value)} />
-              <Button className="gap-2" onClick={addStock} disabled={busy || !addCode || !addData.trim()}><Plus size={15} /> Thêm vào kho</Button>
+              <div className="grid gap-3 md:grid-cols-[260px_minmax(0,1fr)]">
+                <div className="space-y-3">
+                  <Select value={addCode || "__custom"} onValueChange={(value) => setAddCode(value === "__custom" ? "" : value)}>
+                    <SelectTrigger><SelectValue placeholder="Chọn stock code có sẵn" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__custom">Nhập mã khác</SelectItem>
+                      {productCodes.map((code) => <SelectItem key={code} value={code}>{code}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Input placeholder="Stock code, ví dụ GPT1M" value={addCode} onChange={(e) => setAddCode(e.target.value.toUpperCase())} />
+                  <Button className="w-full gap-2" onClick={addStock} disabled={busy || !addCode || !addData.trim()}>
+                    <Plus size={15} /> Thêm vào kho
+                  </Button>
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium">Dán hàng vào</p>
+                      <Badge variant="outline">{addData.split(/\r?\n/).filter((line) => line.trim()).length} dòng</Badge>
+                    </div>
+                    <Textarea
+                      className="min-h-32 font-mono text-xs"
+                      placeholder="Mỗi dòng là 1 account/secret"
+                      value={addData}
+                      onChange={(e) => setAddData(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium">Dòng trùng bị lọc</p>
+                      <Button size="sm" variant="outline" className="h-8 gap-1" onClick={copyDuplicateData} disabled={!duplicateData.trim()}>
+                        <Copy size={14} /> Copy
+                      </Button>
+                    </div>
+                    <Textarea
+                      className="min-h-32 font-mono text-xs"
+                      placeholder="Dòng trùng sẽ hiện ở đây sau khi thêm"
+                      value={duplicateData}
+                      onChange={(e) => setDuplicateData(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

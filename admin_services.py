@@ -39,6 +39,12 @@ def _make_item_id(stock_code: str) -> str:
     return f"{stock_code.strip().upper()}-{shop.now_dt().strftime('%Y%m%d%H%M%S')}-{suffix}"
 
 
+def _secret_key(value: Any) -> str:
+    raw = str(value or "").strip()
+    first_part = raw.split("|", 1)[0].split("----", 1)[0].strip() or raw
+    return first_part.lower()
+
+
 def _firestore():
     global _firebase_ready, _firestore_client
     if _firestore_client is not None:
@@ -448,8 +454,21 @@ def add_stock(data: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Can co stock_code va items")
 
     secrets = [line.strip() for line in raw_items.splitlines() if line.strip()]
-    rows = []
+    existing_keys = {_secret_key(row.get("secret")) for row in _records(shop._ws_pool)}
+    existing_keys.discard("")
+    seen_keys = set()
+    clean_secrets = []
+    duplicate_secrets = []
     for secret in secrets:
+        key = _secret_key(secret)
+        if key in existing_keys or key in seen_keys:
+            duplicate_secrets.append(secret)
+            continue
+        seen_keys.add(key)
+        clean_secrets.append(secret)
+
+    rows = []
+    for secret in clean_secrets:
         rows.append(_row_from_headers(headers, {
             "item_id": _make_item_id(stock_code),
             "stock_code": stock_code,
@@ -464,7 +483,7 @@ def add_stock(data: Dict[str, Any]) -> Dict[str, Any]:
     if rows:
         shop._ws_pool.append_rows(rows, value_input_option="USER_ENTERED")
         shop.invalidate_stock_cache()
-    return {"ok": True, "added": len(rows)}
+    return {"ok": True, "added": len(rows), "skipped_duplicates": duplicate_secrets}
 
 
 def release_order(order_id: str, status: str = "EXPIRED") -> Dict[str, Any]:
