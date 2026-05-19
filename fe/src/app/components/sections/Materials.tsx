@@ -423,9 +423,10 @@ export function Materials({ data, adminKey, refresh }: Props) {
       <Card className="shadow-sm">
         <CardContent className="p-4 space-y-3">
           <Textarea
-            className="min-h-28 font-mono text-xs"
+            className="h-40 min-h-40 overflow-auto whitespace-pre font-mono text-xs [field-sizing:fixed]"
             placeholder="Dán list nguyên liệu vào đây, mỗi dòng là 1 account/secret..."
             value={raw}
+            wrap="off"
             onChange={(e) => setRaw(e.target.value)}
           />
           <div className="flex flex-wrap gap-2">
