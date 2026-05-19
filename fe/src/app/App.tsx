@@ -8,6 +8,7 @@ import { Overview } from "./components/sections/Overview";
 import { Products } from "./components/sections/Products";
 import { Inventory } from "./components/sections/Inventory";
 import { Materials } from "./components/sections/Materials";
+import { GptPlusCheck } from "./components/sections/GptPlusCheck";
 import { Orders } from "./components/sections/Orders";
 import { Users } from "./components/sections/Users";
 import { Reservations } from "./components/sections/Reservations";
@@ -253,6 +254,7 @@ export default function App() {
       case "products": return <Products {...common} />;
       case "inventory": return <Inventory {...common} preset={inventoryPreset} />;
       case "materials": return <Materials {...common} />;
+      case "gptPlus": return <GptPlusCheck adminKey={adminKey} />;
       case "orders": return <Orders {...common} preset={orderPreset} />;
       case "users": return <Users data={data} />;
       case "reservations": return <Reservations data={data} />;

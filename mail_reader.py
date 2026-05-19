@@ -1,6 +1,6 @@
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import unescape
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
@@ -110,6 +110,75 @@ def read_inbox_messages(raw_account: str, limit: int = 5) -> Dict[str, Any]:
     return {"email": account["email"], "messages": messages}
 
 
+def check_gpt_plus_mail(raw_account: str, limit: int = 30, active_days: int = 45) -> Dict[str, Any]:
+    """
+    Check Microsoft inbox for OpenAI/ChatGPT Plus subscription receipts.
+    This does not log in to ChatGPT; it only searches the mailbox that the
+    account line authorizes via refresh token.
+    """
+    account = parse_mail_account(raw_account)
+    token = get_graph_access_token(account["refresh_token"], account["client_id"])
+    max_messages = max(1, min(int(limit or 30), 50))
+
+    params = {
+        "$top": max_messages,
+        "$orderby": "receivedDateTime desc",
+        "$select": "subject,from,receivedDateTime,bodyPreview,body",
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        resp = requests.get(GRAPH_MESSAGES_URL, headers=headers, params=params, timeout=25)
+    except requests.RequestException as e:
+        raise MailReaderError(f"Lỗi kết nối Microsoft Graph: {e}") from e
+
+    if resp.status_code >= 400:
+        detail = _short_error(resp)
+        raise MailReaderError(f"Không đọc được inbox ({resp.status_code}): {detail}")
+
+    cutoff = datetime.now(DISPLAY_TZ) - timedelta(days=max(1, int(active_days or 45)))
+    best_old: Optional[Dict[str, Any]] = None
+
+    for raw_msg in resp.json().get("value", []):
+        normalized = _normalize_message(raw_msg)
+        score = _gpt_plus_score(normalized)
+        if score <= 0:
+            continue
+
+        received_dt = _parse_graph_time(raw_msg.get("receivedDateTime") or "")
+        hit = {
+            "from": normalized.get("from", ""),
+            "subject": normalized.get("subject", ""),
+            "time": normalized.get("time", ""),
+            "score": score,
+            "preview": normalized.get("preview", "")[:240],
+        }
+        if received_dt and received_dt >= cutoff:
+            return {
+                "email": account["email"],
+                "status": "PLUS",
+                "label": "Có gói",
+                "matched": hit,
+            }
+        if not best_old:
+            best_old = hit
+
+    if best_old:
+        return {
+            "email": account["email"],
+            "status": "OLD_PLUS",
+            "label": "Có mail Plus cũ",
+            "matched": best_old,
+        }
+
+    return {
+        "email": account["email"],
+        "status": "NO_PLUS_MAIL",
+        "label": "Không thấy mail Plus",
+        "matched": None,
+    }
+
+
 def extract_codes(text: str) -> List[str]:
     found = re.findall(r"(?<!\d)(\d{4,8})(?!\d)", text or "")
     out: List[str] = []
@@ -135,6 +204,51 @@ def _normalize_message(msg: Dict[str, Any]) -> Dict[str, str]:
         "body": body_text,
         "codes": ", ".join(codes),
     }
+
+
+def _gpt_plus_score(message: Dict[str, str]) -> int:
+    sender = (message.get("from") or "").lower()
+    text = " ".join([
+        message.get("subject", ""),
+        message.get("preview", ""),
+        message.get("body", ""),
+    ]).lower()
+
+    score = 0
+    if "openai" in sender or "openai" in text:
+        score += 1
+    strong_patterns = [
+        "chatgpt plus subscription",
+        "bạn đã đăng ký thành công chatgpt plus",
+        "ban da dang ky thanh cong chatgpt plus",
+        "you successfully subscribed to chatgpt plus",
+        "your chatgpt plus subscription",
+    ]
+    medium_patterns = [
+        "chatgpt plus",
+        "quản lý đăng ký của bạn",
+        "quan ly dang ky cua ban",
+        "đơn hàng số: sub_",
+        "don hang so: sub_",
+        "order number: sub_",
+        "subscription",
+    ]
+    for pattern in strong_patterns:
+        if pattern in text:
+            score += 5
+    for pattern in medium_patterns:
+        if pattern in text:
+            score += 2
+    return score if score >= 4 else 0
+
+
+def _parse_graph_time(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(DISPLAY_TZ)
+    except Exception:
+        return None
 
 
 def _plain_body(value: str) -> str:

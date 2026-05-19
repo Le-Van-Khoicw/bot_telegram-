@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from admin_services import add_stock, load_materials, release_holds, release_order, save_materials, save_product, snapshot, update_order
+from mail_reader import MailReaderError, check_gpt_plus_mail
 
 
 ADMIN_HTML = """<!doctype html>
@@ -504,3 +505,39 @@ def register_admin_routes(app: FastAPI) -> None:
             return {"ok": True, "items": items}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.post("/admin/api/gpt-plus-check")
+    async def admin_gpt_plus_check(request: Request):
+        require_admin(request)
+        data: Dict[str, Any] = await request.json()
+        raw_items = data.get("items") or data.get("accounts") or ""
+        if isinstance(raw_items, str):
+            accounts = [line.strip() for line in raw_items.splitlines() if line.strip()]
+        elif isinstance(raw_items, list):
+            accounts = [str(line).strip() for line in raw_items if str(line).strip()]
+        else:
+            accounts = []
+
+        limit = int(data.get("limit") or 30)
+        active_days = int(data.get("active_days") or 45)
+        accounts = accounts[:100]
+
+        results = []
+        for line in accounts:
+            try:
+                result = await asyncio.to_thread(check_gpt_plus_mail, line, limit, active_days)
+            except MailReaderError as exc:
+                result = {
+                    "email": line.split("|", 1)[0].split("----", 1)[0].strip(),
+                    "status": "ERROR",
+                    "label": "Lỗi đọc mail",
+                    "error": str(exc),
+                    "matched": None,
+                }
+            results.append(result)
+
+        summary: Dict[str, int] = {}
+        for row in results:
+            status = str(row.get("status") or "UNKNOWN")
+            summary[status] = summary.get(status, 0) + 1
+        return {"ok": True, "results": results, "summary": summary}
