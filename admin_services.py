@@ -218,16 +218,22 @@ def _materials_ws(update_header: bool = True):
 
 def load_materials() -> List[Dict[str, str]]:
     if _firestore():
-        return _load_materials_firestore()
+        try:
+            return _load_materials_firestore()
+        except Exception as exc:
+            logger.warning("load MATERIALS tu Firestore loi, fallback sang Google Sheet: %s", exc)
     rows = _records(_materials_ws(update_header=False))
     rows.sort(key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True)
     return rows
 
 
 def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
-    firestore_result = _save_materials_firestore(data)
-    if firestore_result.get("firebase"):
-        return firestore_result
+    try:
+        firestore_result = _save_materials_firestore(data)
+        if firestore_result.get("firebase"):
+            return firestore_result
+    except Exception as exc:
+        logger.warning("save MATERIALS vao Firestore loi, fallback sang Google Sheet: %s", exc)
 
     ws = _materials_ws()
     raw_items = data.get("items") or []
