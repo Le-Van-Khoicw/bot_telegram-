@@ -113,7 +113,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
       const result = await adminApi<{ items?: any[] }>("/admin/api/materials", adminKey, {
         method: "POST",
         body: JSON.stringify({
-          items: options.upsertItems ?? next,
+          items: next,
           deleted_ids: options.deletedIds || [],
           force_clear: Boolean(options.forceClear),
         }),
