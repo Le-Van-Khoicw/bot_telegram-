@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from admin_services import add_stock, load_materials, release_holds, release_order, save_materials, save_product, snapshot, update_order
+from admin_services import add_stock, load_materials, release_holds, release_order, save_materials, save_product, snapshot, update_order, update_stock_item
 from mail_reader import MailReaderError, check_gpt_plus_mail
 
 
@@ -481,6 +481,11 @@ def register_admin_routes(app: FastAPI) -> None:
             bool(data.get("expired_only", True)),
             data.get("status", "EXPIRED"),
         )
+
+    @app.post("/admin/api/stock/update")
+    async def admin_update_stock(request: Request):
+        require_admin(request)
+        return await asyncio.to_thread(update_stock_item, await request.json())
 
     @app.post("/admin/api/orders/update")
     async def admin_update_order(request: Request):

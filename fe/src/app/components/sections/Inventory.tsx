@@ -115,6 +115,23 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
     toast.success("Đã copy dòng trùng");
   };
 
+  const updateStockStatus = async (itemId: string, status: "READY" | "SOLD") => {
+    if (!itemId || itemId === "—") return toast.warning("Item này thiếu item_id");
+    if (status === "READY" && !window.confirm("Trả item này về READY để bán lại?")) return;
+    if (status === "SOLD" && !window.confirm("Đánh dấu item này là đã bán thủ công?")) return;
+    setBusy(true);
+    try {
+      await adminApi("/admin/api/stock/update", adminKey, {
+        method: "POST",
+        body: JSON.stringify({ item_id: itemId, status, sold_order_id: "MANUAL" }),
+      });
+      toast.success(status === "READY" ? "Đã trả item về READY" : "Đã đánh dấu item là SOLD");
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const releaseHeld = async () => {
     setBusy(true);
     try {
@@ -192,7 +209,7 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
 
           <Card className="shadow-sm">
             <CardContent className="p-0 overflow-x-auto">
-              <Table className="min-w-[920px]">
+              <Table className="min-w-[1040px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Item ID</TableHead>
@@ -202,21 +219,36 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                     <TableHead>Hold Order</TableHead>
                     <TableHead>Hết hạn giữ</TableHead>
                     <TableHead>Sold Order</TableHead>
+                    <TableHead className="text-right">Thao tác</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visible.map((item, index) => (
-                    <TableRow key={`${text(item.item_id)}-${normalizeCode(item.stock_code)}-${index}-${text(item.secret).slice(0, 24)}`}>
-                      <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{text(item.item_id)}</code></TableCell>
-                      <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{text(item.stock_code)}</code></TableCell>
-                      <TableCell className="text-xs font-mono max-w-[260px] truncate">{text(item.secret)}</TableCell>
-                      <TableCell className="text-center"><StockBadge status={text(item.status)} /></TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{text(item.hold_order_id)}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{text(item.hold_expires_at)}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{text(item.sold_order_id)}</TableCell>
-                    </TableRow>
-                  ))}
-                  {visible.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Không có stock nào</TableCell></TableRow>}
+                  {visible.map((item, index) => {
+                    const itemId = text(item.item_id);
+                    const status = text(item.status).toUpperCase();
+                    return (
+                      <TableRow key={`${itemId}-${normalizeCode(item.stock_code)}-${index}-${text(item.secret).slice(0, 24)}`}>
+                        <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{itemId}</code></TableCell>
+                        <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{text(item.stock_code)}</code></TableCell>
+                        <TableCell className="text-xs font-mono max-w-[260px] truncate">{text(item.secret)}</TableCell>
+                        <TableCell className="text-center"><StockBadge status={text(item.status)} /></TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{text(item.hold_order_id)}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{text(item.hold_expires_at)}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{text(item.sold_order_id)}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button size="sm" variant="outline" onClick={() => updateStockStatus(itemId, "SOLD")} disabled={busy || status === "SOLD"}>
+                              Đã bán
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => updateStockStatus(itemId, "READY")} disabled={busy || status === "READY"}>
+                              Bán lại
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {visible.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Không có stock nào</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </CardContent>

@@ -499,6 +499,58 @@ def release_order(order_id: str, status: str = "EXPIRED") -> Dict[str, Any]:
     return {"ok": True, "released": released}
 
 
+def update_stock_item(data: Dict[str, Any]) -> Dict[str, Any]:
+    shop.init_sheets()
+    headers = _headers(shop._ws_pool)
+    if not headers:
+        raise RuntimeError("POOL thieu header")
+
+    item_id = str(data.get("item_id") or "").strip()
+    status = str(data.get("status") or "").strip().upper()
+    if not item_id:
+        raise ValueError("Missing item_id")
+    if status not in {"READY", "SOLD"}:
+        raise ValueError("Chi ho tro status READY hoac SOLD")
+
+    c_item = headers.get("item_id")
+    c_status = headers.get("status")
+    if not c_item or not c_status:
+        raise RuntimeError("POOL thieu cot item_id/status")
+
+    values = shop._ws_pool.get_all_values()
+    target_row = 0
+    for rownum, row in enumerate(values[1:], start=2):
+        current_item_id = row[c_item - 1].strip() if c_item - 1 < len(row) else ""
+        if current_item_id == item_id:
+            target_row = rownum
+            break
+    if not target_row:
+        raise ValueError("Khong tim thay item trong kho")
+
+    cells = [Cell(target_row, c_status, status)]
+    if status == "READY":
+        for key in ("hold_order_id", "hold_at", "hold_expires_at", "sold_order_id", "sold_at"):
+            col = headers.get(key)
+            if col:
+                cells.append(Cell(target_row, col, ""))
+    else:
+        now = shop.now_str()
+        for key in ("hold_order_id", "hold_at", "hold_expires_at"):
+            col = headers.get(key)
+            if col:
+                cells.append(Cell(target_row, col, ""))
+        sold_order_col = headers.get("sold_order_id")
+        sold_at_col = headers.get("sold_at")
+        if sold_order_col:
+            cells.append(Cell(target_row, sold_order_col, str(data.get("sold_order_id") or "MANUAL")))
+        if sold_at_col:
+            cells.append(Cell(target_row, sold_at_col, now))
+
+    shop._ws_pool.update_cells(cells, value_input_option="USER_ENTERED")
+    shop.invalidate_stock_cache()
+    return {"ok": True, "item_id": item_id, "status": status}
+
+
 def _is_expired_hold(value: str) -> bool:
     dt = shop.parse_dt(value)
     return bool(dt and dt <= shop.now_dt())
