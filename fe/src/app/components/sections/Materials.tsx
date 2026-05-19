@@ -59,6 +59,12 @@ function normalizeItems(rows: any[]): MaterialItem[] {
     .filter((item) => item.value);
 }
 
+function materialKey(value: any) {
+  const rawValue = String(value || "").trim();
+  const firstPart = rawValue.split("|")[0]?.split("----")[0]?.trim() || rawValue;
+  return firstPart.toLowerCase();
+}
+
 export function Materials({ data, adminKey, refresh }: Props) {
   const [raw, setRaw] = useState("");
   const [stockCode, setStockCode] = useState("");
@@ -250,17 +256,59 @@ export function Materials({ data, adminKey, refresh }: Props) {
   const addOkToStock = async () => {
     const okItems = items.filter((item) => item.status === "OK");
     if (!stockCode || !okItems.length) return;
+    const stockKeys = new Set(
+      (data?.pool || [])
+        .map((row) => materialKey(row.secret))
+        .filter(Boolean),
+    );
+    const seenKeys = new Set<string>();
+    const cleanOkItems: MaterialItem[] = [];
+    const duplicateOkItems: MaterialItem[] = [];
+
+    okItems.forEach((item) => {
+      const key = materialKey(item.value);
+      if (stockKeys.has(key) || seenKeys.has(key)) {
+        duplicateOkItems.push({ ...item, status: "BAD", note: "TRUNG_KHO" });
+        return;
+      }
+      seenKeys.add(key);
+      cleanOkItems.push(item);
+    });
+
+    const applyDuplicateFilter = async () => {
+      const duplicateById = new Map(duplicateOkItems.map((item) => [item.id, item]));
+      const cleanIds = new Set(cleanOkItems.map((item) => item.id));
+      const next = items
+        .filter((item) => !cleanIds.has(item.id))
+        .map((item) => duplicateById.get(item.id) || item);
+      setItems(next);
+      saveItems(next);
+      await saveRemote(next, {
+        upsertItems: duplicateOkItems,
+        deletedIds: cleanOkItems.map((item) => item.id),
+      });
+      return next;
+    };
+
+    if (!cleanOkItems.length && duplicateOkItems.length) {
+      setBusy(true);
+      try {
+        await applyDuplicateFilter();
+        toast.warning(`Không thêm dòng nào. Đã lọc ${duplicateOkItems.length} dòng trùng sang Lỗi.`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     setBusy(true);
     try {
       await adminApi("/admin/api/stock", adminKey, {
         method: "POST",
-        body: JSON.stringify({ stock_code: stockCode, items: okItems.map((item) => item.value).join("\n") }),
+        body: JSON.stringify({ stock_code: stockCode, items: cleanOkItems.map((item) => item.value).join("\n") }),
       });
-      const next = items.filter((item) => item.status !== "OK");
-      setItems(next);
-      saveItems(next);
-      await saveRemote(next, { upsertItems: [], deletedIds: okItems.map((item) => item.id) });
-      toast.success(`Đã thêm ${okItems.length} dòng OK vào kho ${stockCode}`);
+      await applyDuplicateFilter();
+      const duplicateMessage = duplicateOkItems.length ? `, lọc trùng ${duplicateOkItems.length} dòng sang Lỗi` : "";
+      toast.success(`Đã thêm ${cleanOkItems.length} dòng OK vào kho ${stockCode}${duplicateMessage}`);
       await refresh();
     } finally {
       setBusy(false);
