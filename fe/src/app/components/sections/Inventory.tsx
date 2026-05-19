@@ -115,6 +115,12 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
     toast.success("Đã copy dòng trùng");
   };
 
+  const copyStockSecret = async (value: string) => {
+    if (!value || value === "—") return toast.info("Không có dữ liệu để copy");
+    await navigator.clipboard.writeText(value);
+    toast.success("Đã copy stock");
+  };
+
   const updateStockStatus = async (itemId: string, status: "READY" | "SOLD") => {
     if (!itemId || itemId === "—") return toast.warning("Item này thiếu item_id");
     if (status === "READY" && !window.confirm("Trả item này về READY để bán lại?")) return;
@@ -225,12 +231,19 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                 <TableBody>
                   {visible.map((item, index) => {
                     const itemId = text(item.item_id);
+                    const secret = text(item.secret);
                     const status = text(item.status).toUpperCase();
                     return (
-                      <TableRow key={`${itemId}-${normalizeCode(item.stock_code)}-${index}-${text(item.secret).slice(0, 24)}`}>
+                      <TableRow key={`${itemId}-${normalizeCode(item.stock_code)}-${index}-${secret.slice(0, 24)}`}>
                         <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{itemId}</code></TableCell>
                         <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{text(item.stock_code)}</code></TableCell>
-                        <TableCell className="text-xs font-mono max-w-[260px] truncate">{text(item.secret)}</TableCell>
+                        <TableCell
+                          className="max-w-[260px] cursor-pointer select-none truncate font-mono text-xs active:bg-muted"
+                          title="Chạm để copy"
+                          onClick={() => copyStockSecret(secret)}
+                        >
+                          {secret}
+                        </TableCell>
                         <TableCell className="text-center"><StockBadge status={text(item.status)} /></TableCell>
                         <TableCell className="text-xs text-muted-foreground">{text(item.hold_order_id)}</TableCell>
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{text(item.hold_expires_at)}</TableCell>
