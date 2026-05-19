@@ -25,6 +25,7 @@ const stockItemKey = (value: any) => {
   const firstPart = rawValue.split("|")[0]?.split("----")[0]?.trim() || rawValue;
   return firstPart.toLowerCase();
 };
+const countLines = (value: string) => value.split(/\r?\n/).filter((line) => line.trim()).length;
 
 export function Inventory({ data, adminKey, refresh, preset }: Props) {
   const [addCode, setAddCode] = useState("");
@@ -49,6 +50,8 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
     HELD: pool.filter((i) => text(i.status).toUpperCase() === "HELD").length,
     SOLD: pool.filter((i) => text(i.status).toUpperCase() === "SOLD").length,
   };
+  const addLineCount = countLines(addData);
+  const duplicateLineCount = countLines(duplicateData);
 
   const visible = pool.filter((p) => {
     if (filterStatus !== "ALL" && text(p.status).toUpperCase() !== filterStatus) return false;
@@ -146,7 +149,7 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
     <div className="space-y-4">
       <h2 className="flex items-center gap-2"><Warehouse size={20} /> Kho hàng</h2>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {(["READY", "HELD", "SOLD"] as const).map((s) => (
           <Card key={s} className="shadow-sm">
             <CardContent className="p-4 flex items-center justify-between">
@@ -221,10 +224,10 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
         </TabsContent>
 
         <TabsContent value="add" className="space-y-3 pt-2">
-          <Card className="shadow-sm max-w-5xl">
+          <Card className="max-w-full shadow-sm lg:max-w-5xl">
             <CardContent className="p-4 space-y-3">
-              <div className="grid gap-3 md:grid-cols-[260px_minmax(0,1fr)]">
-                <div className="space-y-3">
+              <div className="grid min-w-0 gap-3 md:grid-cols-[260px_minmax(0,1fr)]">
+                <div className="min-w-0 space-y-3">
                   <Select value={addCode || "__custom"} onValueChange={(value) => setAddCode(value === "__custom" ? "" : value)}>
                     <SelectTrigger><SelectValue placeholder="Chọn stock code có sẵn" /></SelectTrigger>
                     <SelectContent>
@@ -238,14 +241,14 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                   </Button>
                 </div>
 
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <div className="space-y-2">
+                <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+                  <div className="min-w-0 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium">Dán hàng vào</p>
-                      <Badge variant="outline">{addData.split(/\r?\n/).filter((line) => line.trim()).length} dòng</Badge>
+                      <Badge variant="outline">{addLineCount} dòng</Badge>
                     </div>
                     <Textarea
-                      className="h-40 min-h-40 overflow-auto whitespace-pre font-mono text-xs [field-sizing:fixed]"
+                      className="h-40 min-h-40 min-w-0 max-w-full overflow-auto whitespace-pre font-mono text-xs [field-sizing:fixed]"
                       placeholder="Mỗi dòng là 1 account/secret"
                       value={addData}
                       wrap="off"
@@ -253,15 +256,18 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                     />
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="min-w-0 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium">Dòng trùng bị lọc</p>
-                      <Button size="sm" variant="outline" className="h-8 gap-1" onClick={copyDuplicateData} disabled={!duplicateData.trim()}>
-                        <Copy size={14} /> Copy
-                      </Button>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Badge variant="outline">{duplicateLineCount} dòng</Badge>
+                        <Button size="sm" variant="outline" className="h-8 gap-1" onClick={copyDuplicateData} disabled={!duplicateData.trim()}>
+                          <Copy size={14} /> Copy
+                        </Button>
+                      </div>
                     </div>
                     <Textarea
-                      className="h-40 min-h-40 overflow-auto whitespace-pre font-mono text-xs [field-sizing:fixed]"
+                      className="h-40 min-h-40 min-w-0 max-w-full overflow-auto whitespace-pre font-mono text-xs [field-sizing:fixed]"
                       placeholder="Dòng trùng sẽ hiện ở đây sau khi thêm"
                       value={duplicateData}
                       wrap="off"
