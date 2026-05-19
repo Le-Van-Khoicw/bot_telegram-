@@ -17,7 +17,7 @@ import { Button } from "./components/ui/button";
 import { adminApi, money, text, type AdminSnapshot } from "./api";
 import { clearToken, getToken, saveToken } from "./utils/auth";
 
-const POLL_MS = 15_000;
+const POLL_MS = 60_000;
 
 export default function App() {
   const [adminKey, setAdminKey] = useState(() => getToken() || "");

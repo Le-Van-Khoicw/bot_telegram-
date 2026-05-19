@@ -286,7 +286,7 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "saved": len(rows) - 1, "items": items}
 
 
-def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
+def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool = False) -> Dict[str, Any]:
     shop.init_sheets()
     products = shop.load_products()
     pool = _records(shop._ws_pool)
@@ -294,11 +294,12 @@ def snapshot(limit: int = 100, pool_limit: int = 2000) -> Dict[str, Any]:
     users = _records(shop._ws_users)
     reservations = _records(shop._ws_res)
     fulfillments = _records(shop._ws_ful)
-    try:
-        materials = load_materials()
-    except Exception as exc:
-        logger.warning("load MATERIALS failed during snapshot: %s", exc)
-        materials = []
+    materials = []
+    if include_materials:
+        try:
+            materials = load_materials()
+        except Exception as exc:
+            logger.warning("load MATERIALS failed during snapshot: %s", exc)
 
     orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     limit = max(1, min(int(limit or 100), 300))

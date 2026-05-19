@@ -172,7 +172,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
     void fetchRemoteMaterials().catch(() => undefined);
     const timer = window.setInterval(() => {
       void fetchRemoteMaterials().catch(() => undefined);
-    }, 3000);
+    }, 300000);
     return () => window.clearInterval(timer);
   }, [adminKey, fetchRemoteMaterials]);
 
