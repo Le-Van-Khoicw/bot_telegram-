@@ -419,7 +419,15 @@ export function Materials({ data, adminKey, refresh }: Props) {
             <Button onClick={importRaw} disabled={!raw.trim()}>Thêm vào danh sách</Button>
             <Button variant="outline" className="gap-2" onClick={() => copyItems("OK")}><Copy size={15} /> Copy OK</Button>
             <Button variant="outline" className="gap-2" onClick={() => copyItems("BAD")}><Copy size={15} /> Copy lỗi</Button>
-            <Button variant="ghost" className="gap-2" onClick={() => clearStatus()}><Trash2 size={15} /> Xóa tất cả</Button>
+            <Button variant="ghost" className="gap-2" onClick={() => clearStatus("NEW")} disabled={counts.NEW === 0}>
+              <Trash2 size={15} /> Xóa chưa phân loại
+            </Button>
+            <Button variant="ghost" className="gap-2" onClick={() => clearStatus("OK")} disabled={counts.OK === 0}>
+              <Trash2 size={15} /> Xóa OK
+            </Button>
+            <Button variant="ghost" className="gap-2" onClick={() => clearStatus("BAD")} disabled={counts.BAD === 0}>
+              <Trash2 size={15} /> Xóa lỗi
+            </Button>
           </div>
         </CardContent>
       </Card>
