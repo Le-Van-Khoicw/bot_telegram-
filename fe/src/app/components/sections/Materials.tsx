@@ -76,6 +76,15 @@ export function Materials({ data, adminKey, refresh }: Props) {
     syncStateRef.current = syncState;
   }, [syncState]);
 
+  const applyRemoteItems = useCallback((rows: any[] | undefined, allowEmpty = false) => {
+    const synced = normalizeItems(rows || []);
+    if (synced.length === 0 && !allowEmpty && loadItems().length > 0) {
+      return;
+    }
+    setItems(synced);
+    saveItems(synced);
+  }, []);
+
   const productCodes = useMemo(() => {
     const codes = (data?.products || []).map((p) => text(p.stock_code)).filter((x) => x !== "—");
     return Array.from(new Set(codes)).sort();
@@ -102,9 +111,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
         }),
       });
       if (result.items) {
-        const synced = normalizeItems(result.items);
-        setItems(synced);
-        saveItems(synced);
+        applyRemoteItems(result.items, Boolean(options.forceClear) || next.length === 0);
       }
       pendingSaveRef.current = null;
       pendingOptionsRef.current = null;
@@ -140,10 +147,8 @@ export function Materials({ data, adminKey, refresh }: Props) {
   const fetchRemoteMaterials = useCallback(async () => {
     if (!adminKey || pendingSaveRef.current || syncStateRef.current === "saving") return;
     const result = await adminApi<{ items?: any[] }>("/admin/api/materials", adminKey);
-    const remoteItems = normalizeItems(result.items || []);
-    setItems(remoteItems);
-    saveItems(remoteItems);
-  }, [adminKey]);
+    applyRemoteItems(result.items, false);
+  }, [adminKey, applyRemoteItems]);
 
   useEffect(() => () => {
     if (retryTimerRef.current) {
@@ -166,11 +171,9 @@ export function Materials({ data, adminKey, refresh }: Props) {
   useEffect(() => {
     if (!data) return;
     if (pendingSaveRef.current || syncStateRef.current === "saving") return;
-    const remoteItems = normalizeItems(data.materials || []);
-    setItems(remoteItems);
-    saveItems(remoteItems);
+    applyRemoteItems(data.materials || [], false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.generated_at]);
+  }, [data?.generated_at, applyRemoteItems]);
 
   const setAndSave = (
     next: MaterialItem[],
@@ -188,11 +191,6 @@ export function Materials({ data, adminKey, refresh }: Props) {
       autosaveTimerRef.current = null;
       void saveRemote(next, options);
     }, 800);
-  };
-
-  const syncNow = () => {
-    const pending = pendingSaveRef.current || items;
-    void saveRemote(pending, pendingOptionsRef.current || {});
   };
 
   const importRaw = () => {
@@ -402,9 +400,6 @@ export function Materials({ data, adminKey, refresh }: Props) {
             <TabsTrigger value="BAD">Không dùng được</TabsTrigger>
           </TabsList>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant={syncState === "error" ? "destructive" : "secondary"} onClick={syncNow} disabled={syncState === "saving"}>
-              {syncState === "saving" ? "Đang đồng bộ..." : syncState === "synced" ? "Đã đồng bộ" : "Lưu lên Sheet"}
-            </Button>
             <Button size="sm" variant="outline" onClick={() => bulkUpdateStatus("NEW", "OK")} disabled={counts.NEW === 0}>
               Chuyển chưa phân loại sang OK
             </Button>
