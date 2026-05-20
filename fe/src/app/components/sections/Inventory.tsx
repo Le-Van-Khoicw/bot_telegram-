@@ -18,7 +18,7 @@ interface Props {
   preset?: { status?: string; stockCode?: string; nonce: number };
 }
 
-type MaterialItem = { value: string; status?: string; note?: string };
+type GptMark = { value: string; status?: string; note?: string };
 
 const normalizeCode = (value: any) => text(value).trim().toUpperCase();
 const isRealCode = (value: string) => value !== "—" && value !== "â€”";
@@ -42,12 +42,12 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
   const loadDieMaterials = useCallback(async () => {
     if (!adminKey) return;
     try {
-      const response = await adminApi<{ items?: MaterialItem[] }>("/admin/api/materials", adminKey);
+      const response = await adminApi<{ items?: GptMark[] }>("/admin/api/gpt-marks", adminKey);
       const keys = new Set<string>();
       for (const item of response.items || []) {
         const status = String(item.status || "").toUpperCase();
         const note = String(item.note || "").toUpperCase();
-        if (status !== "BAD" || !note.includes("OPENAI_DIE")) continue;
+        if (status !== "BANNED" && status !== "DIE" && !note.includes("OPENAI_DIE")) continue;
         const key = stockItemKey(item.value);
         if (key) keys.add(key);
       }

@@ -22,9 +22,6 @@ type CheckResult = {
   } | null;
 };
 
-type MaterialStatus = "NEW" | "OK" | "BAD";
-type MaterialItem = { id: string; value: string; status: MaterialStatus; note?: string };
-
 interface Props {
   adminKey: string;
   refresh?: () => Promise<void>;
@@ -48,28 +45,10 @@ function emailFromLine(line: string) {
   return line.split("|", 1)[0].split("----", 1)[0].trim().toLowerCase();
 }
 
-function makeId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function materialKey(value: string) {
   const rawValue = String(value || "").trim();
   const firstPart = rawValue.split("|")[0]?.split("----")[0]?.trim() || rawValue;
   return firstPart.toLowerCase();
-}
-
-function normalizeMaterials(rows: any[]): MaterialItem[] {
-  return (rows || [])
-    .map((row) => {
-      const status = String(row.status || "NEW").toUpperCase();
-      return {
-        id: String(row.id || makeId()),
-        value: String(row.value || "").trim(),
-        status: (status === "OK" || status === "BAD" ? status : "NEW") as MaterialStatus,
-        note: row.note ? String(row.note) : undefined,
-      };
-    })
-    .filter((item) => item.value);
 }
 
 export function GptPlusCheck({ adminKey, refresh }: Props) {
@@ -145,35 +124,32 @@ export function GptPlusCheck({ adminKey, refresh }: Props) {
 
     setMarkingBusy(true);
     try {
-      const response = await adminApi<{ items?: any[] }>("/admin/api/materials", adminKey);
-      const materials = normalizeMaterials(response.items || []);
-      const byKey = new Map(materials.map((item) => [materialKey(item.value), item]));
       let plusCount = 0;
       let dieCount = 0;
-
-      for (const row of markedRows) {
+      const marks = markedRows.map((row) => {
         const value = lineFor(row);
         const key = materialKey(value || row.email);
-        const nextStatus: MaterialStatus = row.status === "PLUS" ? "OK" : "BAD";
         const reason = row.status === "PLUS"
           ? "GPT_PLUS"
           : `OPENAI_DIE: ${row.matched?.subject || row.matched?.preview || row.label}`;
-        const current = byKey.get(key);
-        const updated = current
-          ? { ...current, value: current.value || value, status: nextStatus, note: reason }
-          : { id: makeId(), value, status: nextStatus, note: reason };
-        byKey.set(key, updated);
         if (row.status === "PLUS") plusCount += 1;
         if (row.status === "BANNED") dieCount += 1;
-      }
+        return {
+          key,
+          value,
+          status: row.status,
+          note: reason,
+          subject: row.matched?.subject || row.matched?.preview || row.label,
+        };
+      });
 
-      const nextItems = Array.from(byKey.values());
-      await adminApi("/admin/api/materials", adminKey, {
+      const response = await adminApi<{ cleaned_materials?: number }>("/admin/api/gpt-marks", adminKey, {
         method: "POST",
-        body: JSON.stringify({ items: nextItems, deleted_ids: [], force_clear: false }),
+        body: JSON.stringify({ items: marks }),
       });
       if (refresh) await refresh();
-      toast.success(`Đã đánh dấu kho: OK ${plusCount}, Lỗi ${dieCount}`);
+      const cleaned = response.cleaned_materials ? `, dọn ${response.cleaned_materials} dòng khỏi Nguyên liệu` : "";
+      toast.success(`Đã đánh dấu kho: OK ${plusCount}, Lỗi ${dieCount}${cleaned}`);
     } finally {
       setMarkingBusy(false);
     }

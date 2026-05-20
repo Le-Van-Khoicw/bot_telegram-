@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from admin_services import add_stock, load_materials, release_holds, release_order, save_materials, save_product, snapshot, update_order, update_stock_item
+from admin_services import add_stock, load_gpt_marks, load_materials, release_holds, release_order, save_gpt_marks, save_materials, save_product, snapshot, update_order, update_stock_item
 from mail_reader import MailReaderError, check_gpt_plus_mail
 
 logger = logging.getLogger("admin_dashboard")
@@ -513,6 +513,24 @@ def register_admin_routes(app: FastAPI) -> None:
         except Exception as exc:
             logger.exception("admin_get_materials failed")
             return {"ok": False, "error": str(exc), "source": "materials"}
+
+    @app.post("/admin/api/gpt-marks")
+    async def admin_save_gpt_marks(request: Request):
+        require_admin(request)
+        try:
+            return await asyncio.to_thread(save_gpt_marks, await request.json())
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.get("/admin/api/gpt-marks")
+    async def admin_get_gpt_marks(request: Request):
+        require_admin(request)
+        try:
+            items = await asyncio.to_thread(load_gpt_marks)
+            return {"ok": True, "items": items}
+        except Exception as exc:
+            logger.exception("admin_get_gpt_marks failed")
+            return {"ok": False, "error": str(exc), "source": "gpt_marks"}
 
     @app.post("/admin/api/gpt-plus-check")
     async def admin_gpt_plus_check(request: Request):

@@ -11,7 +11,7 @@ import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../ap
 
 type OrderStatus = "PENDING" | "PAID" | "DELIVERED" | "EXPIRED" | "CANCELLED";
 type OrderFilter = OrderStatus | "ALL" | "FAILED";
-type MaterialItem = { value: string; status?: string; note?: string };
+type GptMark = { value: string; status?: string; note?: string };
 
 interface Props {
   data: AdminSnapshot | null;
@@ -39,12 +39,12 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
   const loadDieMaterials = useCallback(async () => {
     if (!adminKey) return;
     try {
-      const response = await adminApi<{ items?: MaterialItem[] }>("/admin/api/materials", adminKey);
+      const response = await adminApi<{ items?: GptMark[] }>("/admin/api/gpt-marks", adminKey);
       const keys = new Set<string>();
       for (const item of response.items || []) {
         const status = String(item.status || "").toUpperCase();
         const note = String(item.note || "").toUpperCase();
-        if (status !== "BAD" || !note.includes("OPENAI_DIE")) continue;
+        if (status !== "BANNED" && status !== "DIE" && !note.includes("OPENAI_DIE")) continue;
         const key = materialKey(item.value);
         if (key) keys.add(key);
       }

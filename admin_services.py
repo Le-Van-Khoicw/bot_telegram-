@@ -11,6 +11,8 @@ import bot_shop as shop
 MATERIALS_TAB = "MATERIALS"
 MATERIALS_HEADERS = ["id", "value", "status", "note", "created_at", "updated_at"]
 MATERIALS_COLLECTION = os.getenv("FIREBASE_MATERIALS_COLLECTION", "materials").strip() or "materials"
+GPT_MARKS_TAB = "GPT_MARKS"
+GPT_MARK_HEADERS = ["key", "value", "status", "note", "subject", "updated_at"]
 logger = logging.getLogger("admin_services")
 
 _firebase_ready = False
@@ -43,6 +45,93 @@ def _secret_key(value: Any) -> str:
     raw = str(value or "").strip()
     first_part = raw.split("|", 1)[0].split("----", 1)[0].strip() or raw
     return first_part.lower()
+
+
+def _gpt_marks_ws(update_header: bool = True):
+    shop.init_sheets()
+    try:
+        ws = shop._gs_sheet.worksheet(GPT_MARKS_TAB)
+    except Exception:
+        try:
+            ws = shop._gs_sheet.add_worksheet(title=GPT_MARKS_TAB, rows=1000, cols=len(GPT_MARK_HEADERS))
+        except Exception as exc:
+            if "already exists" not in str(exc).lower():
+                raise
+            ws = shop._gs_sheet.worksheet(GPT_MARKS_TAB)
+        ws.update("A1:F1", [GPT_MARK_HEADERS], value_input_option="USER_ENTERED")
+        return ws
+
+    if update_header:
+        try:
+            headers = [str(h).strip().lower() for h in ws.row_values(1)]
+        except Exception:
+            headers = []
+        if not any(headers):
+            ws.update("A1:F1", [GPT_MARK_HEADERS], value_input_option="USER_ENTERED")
+    return ws
+
+
+def load_gpt_marks() -> List[Dict[str, str]]:
+    rows = _records(_gpt_marks_ws(update_header=False))
+    rows.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
+    return rows
+
+
+def save_gpt_marks(data: Dict[str, Any]) -> Dict[str, Any]:
+    ws = _gpt_marks_ws()
+    current = load_gpt_marks()
+    by_key = {str(item.get("key") or "").strip().lower(): item for item in current if item.get("key")}
+    now = shop.now_str()
+
+    for raw in data.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        value = str(raw.get("value") or "").strip()
+        key = str(raw.get("key") or "").strip().lower() or _secret_key(value)
+        if not key:
+            continue
+        status = str(raw.get("status") or "").strip().upper()
+        if status not in ("PLUS", "BANNED", "DIE"):
+            continue
+        by_key[key] = {
+            "key": key,
+            "value": value,
+            "status": "BANNED" if status == "DIE" else status,
+            "note": str(raw.get("note") or ""),
+            "subject": str(raw.get("subject") or ""),
+            "updated_at": now,
+        }
+
+    rows = [GPT_MARK_HEADERS]
+    for item in sorted(by_key.values(), key=lambda x: x.get("updated_at") or "", reverse=True):
+        rows.append([str(item.get(h) or "") for h in GPT_MARK_HEADERS])
+
+    target_rows = max(len(rows), len(current) + 1, 2)
+    blank = [""] * len(GPT_MARK_HEADERS)
+    payload = rows + [blank for _ in range(target_rows - len(rows))]
+    ws.update(f"A1:F{target_rows}", payload, value_input_option="RAW")
+    cleaned_materials = cleanup_gpt_marks_from_materials()
+    return {"ok": True, "saved": len(rows) - 1, "items": rows_to_gpt_marks(rows[1:]), "cleaned_materials": cleaned_materials}
+
+
+def rows_to_gpt_marks(rows: List[List[str]]) -> List[Dict[str, str]]:
+    return [dict(zip(GPT_MARK_HEADERS, row)) for row in rows if any(row)]
+
+
+def cleanup_gpt_marks_from_materials() -> int:
+    try:
+        materials = load_materials()
+        cleaned = [
+            item for item in materials
+            if not str(item.get("note") or "").upper().startswith(("GPT_PLUS", "OPENAI_DIE"))
+        ]
+        removed = len(materials) - len(cleaned)
+        if removed > 0:
+            save_materials({"items": cleaned, "force_clear": len(cleaned) == 0})
+        return removed
+    except Exception as exc:
+        logger.warning("cleanup GPT marks from MATERIALS failed: %s", exc)
+        return 0
 
 
 def _firestore():
