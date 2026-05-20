@@ -7,7 +7,8 @@ import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
 import { Textarea } from "../ui/textarea";
 
-type CheckStatus = "PLUS" | "OLD_PLUS" | "NO_PLUS_MAIL" | "ERROR";
+type CheckStatus = "PLUS" | "OLD_PLUS" | "NO_PLUS_MAIL" | "BANNED" | "ERROR";
+type PanelMode = "plus" | "banned" | "other";
 
 type CheckResult = {
   email: string;
@@ -17,6 +18,7 @@ type CheckResult = {
   matched?: {
     subject?: string;
     time?: string;
+    preview?: string;
   } | null;
 };
 
@@ -53,8 +55,9 @@ export function GptPlusCheck({ adminKey }: Props) {
   }, [raw]);
 
   const plusResults = useMemo(() => results.filter((row) => row.status === "PLUS"), [results]);
+  const bannedResults = useMemo(() => results.filter((row) => row.status === "BANNED"), [results]);
   const missingResults = useMemo(
-    () => results.filter((row) => row.status !== "PLUS"),
+    () => results.filter((row) => row.status !== "PLUS" && row.status !== "BANNED"),
     [results],
   );
 
@@ -101,43 +104,55 @@ export function GptPlusCheck({ adminKey }: Props) {
     localStorage.removeItem(RESULT_KEY);
   };
 
-  const resultPanel = (title: string, rows: CheckResult[], plus: boolean) => (
-    <Card className="shadow-sm">
-      <CardContent className="p-0">
-        <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-          <div className="font-medium">{title}</div>
-          <Button size="sm" variant={plus ? "default" : "outline"} className="gap-2" onClick={() => copyRows(rows)}>
-            <Copy size={14} /> Copy tất cả
-          </Button>
-        </div>
-        <div className="max-h-[560px] overflow-y-auto">
-          {rows.map((row, index) => (
-            <button
-              key={`${row.email}-${index}`}
-              type="button"
-              className="grid w-full grid-cols-[40px_minmax(0,1fr)_86px] items-center gap-2 border-b px-4 py-2 text-left hover:bg-muted/60 active:bg-muted"
-              title={row.error || row.matched?.subject || "Bấm để copy"}
-              onClick={() => copyOne(row)}
+  const resultPanel = (title: string, rows: CheckResult[], mode: PanelMode) => {
+    const isPlus = mode === "plus";
+    const isBanned = mode === "banned";
+    return (
+      <Card className="shadow-sm">
+        <CardContent className="p-0">
+          <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+            <div className="font-medium">{title}</div>
+            <Button
+              size="sm"
+              variant={isPlus ? "default" : "outline"}
+              className={isBanned ? "gap-2 border-red-200 text-red-700 hover:bg-red-50" : "gap-2"}
+              onClick={() => copyRows(rows)}
             >
-              <span className="text-sm text-muted-foreground">{index + 1}</span>
-              <span className="min-w-0">
-                <span className="block truncate font-mono text-xs">{row.email}</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {row.error || row.matched?.subject || row.label}
+              <Copy size={14} /> Copy tất cả
+            </Button>
+          </div>
+          <div className="max-h-[560px] overflow-y-auto">
+            {rows.map((row, index) => (
+              <button
+                key={`${row.email}-${index}`}
+                type="button"
+                className="grid w-full grid-cols-[40px_minmax(0,1fr)_86px] items-center gap-2 border-b px-4 py-2 text-left hover:bg-muted/60 active:bg-muted"
+                title={row.error || row.matched?.subject || row.matched?.preview || "Bấm để copy"}
+                onClick={() => copyOne(row)}
+              >
+                <span className="text-sm text-muted-foreground">{index + 1}</span>
+                <span className="min-w-0">
+                  <span className="block truncate font-mono text-xs">{row.email}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {row.error || row.matched?.subject || row.matched?.preview || row.label}
+                  </span>
                 </span>
-              </span>
-              <Badge className={plus ? "bg-emerald-600" : ""} variant={plus ? "default" : "outline"}>
-                {plus ? "Có" : "Chưa"}
-              </Badge>
-            </button>
-          ))}
-          {rows.length === 0 && (
-            <div className="py-10 text-center text-sm text-muted-foreground">Chưa có dữ liệu</div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
+                <Badge
+                  className={isPlus ? "bg-emerald-600" : isBanned ? "bg-red-600" : ""}
+                  variant={isPlus || isBanned ? "default" : "outline"}
+                >
+                  {isPlus ? "Có" : isBanned ? "Die" : "Chưa"}
+                </Badge>
+              </button>
+            ))}
+            {rows.length === 0 && (
+              <div className="py-10 text-center text-sm text-muted-foreground">Chưa có dữ liệu</div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -145,6 +160,7 @@ export function GptPlusCheck({ adminKey }: Props) {
         <h2 className="flex items-center gap-2"><MailCheck size={20} /> Check GPT Plus</h2>
         <div className="flex flex-wrap gap-2">
           <Badge className="bg-emerald-600">Có {plusResults.length}</Badge>
+          <Badge className="bg-red-600">Die {bannedResults.length}</Badge>
           <Badge variant="outline">Chưa {missingResults.length}</Badge>
         </div>
       </div>
@@ -166,9 +182,10 @@ export function GptPlusCheck({ adminKey }: Props) {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {resultPanel(`Có gói (${plusResults.length})`, plusResults, true)}
-        {resultPanel(`Chưa có / lỗi (${missingResults.length})`, missingResults, false)}
+      <div className="grid gap-4 lg:grid-cols-3">
+        {resultPanel(`Có gói (${plusResults.length})`, plusResults, "plus")}
+        {resultPanel(`Acc die / bị ban (${bannedResults.length})`, bannedResults, "banned")}
+        {resultPanel(`Chưa có / lỗi (${missingResults.length})`, missingResults, "other")}
       </div>
     </div>
   );

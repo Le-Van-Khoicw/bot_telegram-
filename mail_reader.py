@@ -141,6 +141,21 @@ def check_gpt_plus_mail(raw_account: str, limit: int = 30, active_days: int = 45
 
     for raw_msg in resp.json().get("value", []):
         normalized = _normalize_message(raw_msg)
+        banned_score = _openai_banned_score(normalized)
+        if banned_score > 0:
+            return {
+                "email": account["email"],
+                "status": "BANNED",
+                "label": "Acc die / bi ban",
+                "matched": {
+                    "from": normalized.get("from", ""),
+                    "subject": normalized.get("subject", ""),
+                    "time": normalized.get("time", ""),
+                    "score": banned_score,
+                    "preview": normalized.get("preview", "")[:240],
+                },
+            }
+
         score = _gpt_plus_score(normalized)
         if score <= 0:
             continue
@@ -240,6 +255,44 @@ def _gpt_plus_score(message: Dict[str, str]) -> int:
         if pattern in text:
             score += 2
     return score if score >= 4 else 0
+
+
+def _openai_banned_score(message: Dict[str, str]) -> int:
+    sender = (message.get("from") or "").lower()
+    text = " ".join([
+        message.get("subject", ""),
+        message.get("preview", ""),
+        message.get("body", ""),
+    ]).lower()
+
+    if "openai" not in sender and "openai" not in text and "chatgpt" not in text:
+        return 0
+
+    score = 1
+    strong_patterns = [
+        "your account has been banned",
+        "account has been banned",
+        "your account was banned",
+        "account was banned",
+        "can no longer be used",
+        "violated our terms and usage policies",
+        "violated our terms",
+        "recent activity violated",
+    ]
+    medium_patterns = [
+        "initiate appeal",
+        "start an appeal",
+        "appeal",
+        "usage policies",
+        "terms and usage policies",
+    ]
+    for pattern in strong_patterns:
+        if pattern in text:
+            score += 5
+    for pattern in medium_patterns:
+        if pattern in text:
+            score += 2
+    return score if score >= 6 else 0
 
 
 def _parse_graph_time(value: str) -> Optional[datetime]:
