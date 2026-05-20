@@ -76,14 +76,34 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
   const dieCountByOrder = useMemo(() => {
     const counts = new Map<string, number>();
     if (!dieKeys.size) return counts;
+
+    for (const row of data?.pool || []) {
+      const orderId = text(row.sold_order_id || row.hold_order_id);
+      const key = materialKey(row.secret);
+      if (orderId === "—" || !key || !dieKeys.has(key)) continue;
+      counts.set(orderId, (counts.get(orderId) || 0) + 1);
+    }
+
     for (const row of data?.deliveries || data?.fulfillments || []) {
       const orderId = text(row.order_id);
       const key = materialKey(row.secret);
       if (orderId === "—" || !key || !dieKeys.has(key)) continue;
       counts.set(orderId, (counts.get(orderId) || 0) + 1);
     }
+
+    for (const order of data?.orders || []) {
+      const orderId = text(order.order_id);
+      const deliverText = String(order.deliver_text || "");
+      if (orderId === "—" || !deliverText) continue;
+      const dieLines = deliverText
+        .split(/\r?\n/)
+        .filter((line) => dieKeys.has(materialKey(line)));
+      if (dieLines.length) {
+        counts.set(orderId, Math.max(counts.get(orderId) || 0, dieLines.length));
+      }
+    }
     return counts;
-  }, [data?.deliveries, data?.fulfillments, dieKeys]);
+  }, [data?.deliveries, data?.fulfillments, data?.orders, data?.pool, dieKeys]);
 
   const orders = data?.orders || [];
   const visible = orders.filter((order) => {
