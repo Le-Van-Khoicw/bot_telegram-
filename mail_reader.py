@@ -137,6 +137,7 @@ def check_gpt_plus_mail(raw_account: str, limit: int = 30, active_days: int = 45
         raise MailReaderError(f"Không đọc được inbox ({resp.status_code}): {detail}")
 
     cutoff = datetime.now(DISPLAY_TZ) - timedelta(days=max(1, int(active_days or 45)))
+    best_plus: Optional[Dict[str, Any]] = None
     best_old: Optional[Dict[str, Any]] = None
 
     for raw_msg in resp.json().get("value", []):
@@ -169,14 +170,19 @@ def check_gpt_plus_mail(raw_account: str, limit: int = 30, active_days: int = 45
             "preview": normalized.get("preview", "")[:240],
         }
         if received_dt and received_dt >= cutoff:
-            return {
-                "email": account["email"],
-                "status": "PLUS",
-                "label": "Có gói",
-                "matched": hit,
-            }
+            if not best_plus:
+                best_plus = hit
+            continue
         if not best_old:
             best_old = hit
+
+    if best_plus:
+        return {
+            "email": account["email"],
+            "status": "PLUS",
+            "label": "Có gói",
+            "matched": best_plus,
+        }
 
     if best_old:
         return {
