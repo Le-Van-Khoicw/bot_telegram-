@@ -24,8 +24,10 @@ from dotenv import load_dotenv
 load_dotenv()
 from telegram import (
     Update,
+    BotCommand,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    MenuButtonCommands,
     ReplyKeyboardMarkup,
     KeyboardButton,
 )
@@ -1302,6 +1304,26 @@ async def cmd_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_support(update.effective_user.id, context)
+
+
+async def setup_bot_commands(app: Application) -> None:
+    commands = [
+        BotCommand("start", "Menu chính"),
+        BotCommand("shop", "Xem sản phẩm"),
+        BotCommand("sanpham", "Xem sản phẩm"),
+        BotCommand("orders", "Đơn hàng của bạn"),
+        BotCommand("support", "Hỗ trợ"),
+        BotCommand("hotro", "Hỗ trợ"),
+        BotCommand("2fa", "Lấy mã 2FA"),
+        BotCommand("mail", "Đọc hòm thư"),
+    ]
+    try:
+        await app.bot.set_my_commands(commands)
+        await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("✅ Telegram command menu registered")
+    except Exception:
+        logger.exception("register telegram command menu failed")
+
 
 async def cmd_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -2956,9 +2978,9 @@ def configure_application(app: Application) -> Application:
         )
 
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("shop", cmd_shop))
+    app.add_handler(CommandHandler(["shop", "sanpham"], cmd_shop))
     app.add_handler(CommandHandler("orders", cmd_orders))
-    app.add_handler(CommandHandler("support", cmd_support))
+    app.add_handler(CommandHandler(["support", "hotro"], cmd_support))
     app.add_handler(CommandHandler("game", cmd_game))
     app.add_handler(CommandHandler("hangve", cmd_hangve))
     app.add_handler(CommandHandler("mail", cmd_mail))
@@ -2978,7 +3000,7 @@ def build_application() -> Application:
     except Exception as e:
         logger.error("❌ init_sheets error: %s", e)
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(setup_bot_commands).build()
     return configure_application(app)
 
 

@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { toast } from "sonner";
+import { Loader2, Megaphone, Package, Pencil, Plus } from "lucide-react";
 import { Card, CardContent } from "../ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Button } from "../ui/button";
@@ -6,7 +8,6 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Badge } from "../ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
-import { Plus, Pencil, Package } from "lucide-react";
 import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../api";
 
 interface Props {
@@ -21,8 +22,13 @@ export function Products({ data, adminKey, refresh }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ ...EMPTY });
   const [saving, setSaving] = useState(false);
+  const [broadcasting, setBroadcasting] = useState(false);
 
-  const openAdd = () => { setForm({ ...EMPTY }); setModalOpen(true); };
+  const openAdd = () => {
+    setForm({ ...EMPTY });
+    setModalOpen(true);
+  };
+
   const openEdit = (p: AnyRow) => {
     setForm({
       product_id: text(p.product_id) === "—" ? "" : text(p.product_id),
@@ -45,13 +51,34 @@ export function Products({ data, adminKey, refresh }: Props) {
     }
   };
 
+  const notifyUsers = async () => {
+    setBroadcasting(true);
+    try {
+      const result = await adminApi<{ sent?: number; failed?: number; total?: number }>(
+        "/admin/api/products/broadcast-stock",
+        adminKey,
+        { method: "POST" },
+      );
+      toast.success(`Đã gửi thông báo kho: ${result.sent || 0}/${result.total || 0} user`);
+      if (result.failed) toast.warning(`Có ${result.failed} user gửi lỗi`);
+    } finally {
+      setBroadcasting(false);
+    }
+  };
+
   const products = data?.products || [];
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
         <h2 className="flex items-center gap-2"><Package size={20} /> Sản phẩm</h2>
-        <Button size="sm" className="gap-1.5" onClick={openAdd}><Plus size={15} /> Thêm sản phẩm</Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={notifyUsers} disabled={broadcasting}>
+            {broadcasting ? <Loader2 size={15} className="animate-spin" /> : <Megaphone size={15} />}
+            Thông báo user
+          </Button>
+          <Button size="sm" className="gap-1.5" onClick={openAdd}><Plus size={15} /> Thêm sản phẩm</Button>
+        </div>
       </div>
 
       <Card className="shadow-sm">

@@ -4,6 +4,7 @@ import random
 import string
 from typing import Any, Dict, List
 
+import requests
 from gspread.cell import Cell
 
 import bot_shop as shop
@@ -75,6 +76,78 @@ def load_gpt_marks() -> List[Dict[str, str]]:
     rows = _records(_gpt_marks_ws(update_header=False))
     rows.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
     return rows
+
+
+def _plain_stock_update_text() -> str:
+    products = shop.load_products_cached()
+    stock_ready = shop.stock_count_ready_by_code_cached()
+    available = [
+        (product, stock_ready.get(product["stock_code"], 0))
+        for product in products
+        if stock_ready.get(product["stock_code"], 0) > 0
+    ]
+    available.sort(key=lambda item: item[1], reverse=True)
+    total = sum(qty for _, qty in available)
+
+    lines = [
+        "📦 CẬP NHẬT KHO HÀNG ✨",
+        "",
+        f"🕒 Cập nhật: {shop.now_str()}",
+        f"📊 Sản phẩm còn hàng: {len(available)} | Tổng tồn: {total}",
+        "",
+        "Tồn kho hiện tại:",
+        "",
+    ]
+    if not available:
+        lines.append("⛔ Hiện chưa có sản phẩm còn hàng.")
+    else:
+        for product, qty in available[:8]:
+            icon = "🟢" if qty >= 5 else "🟡"
+            lines.append(
+                f"{icon} 📘 {product['name']}\n"
+                f"• Số lượng: {qty}  • Giá: {shop.fmt_price(product['price'])}"
+            )
+    lines.extend(["", "👉 Bấm Đi mua hàng để chọn sản phẩm cần mua."])
+    return "\n".join(lines)
+
+
+def broadcast_stock_update() -> Dict[str, Any]:
+    if not shop.BOT_TOKEN or shop.BOT_TOKEN == "PUT_YOUR_BOT_TOKEN_HERE":
+        raise RuntimeError("BOT_TOKEN chưa cấu hình")
+
+    user_ids = shop.get_all_user_chat_ids()
+    text = _plain_stock_update_text()
+    reply_markup = {
+        "inline_keyboard": [
+            [{"text": "🛒 Đi mua hàng", "callback_data": "go_products"}],
+            [{"text": "✨ Làm mới gợi ý", "callback_data": "refresh_stock"}],
+        ]
+    }
+    url = f"https://api.telegram.org/bot{shop.BOT_TOKEN}/sendMessage"
+    ok = fail = 0
+    failed: List[str] = []
+
+    for chat_id in user_ids:
+        try:
+            response = requests.post(
+                url,
+                json={
+                    "chat_id": chat_id,
+                    "text": text,
+                    "reply_markup": reply_markup,
+                    "disable_web_page_preview": True,
+                },
+                timeout=15,
+            )
+            if response.ok:
+                ok += 1
+            else:
+                fail += 1
+                failed.append(f"{chat_id}: {response.status_code} {response.text[:120]}")
+        except Exception as exc:
+            fail += 1
+            failed.append(f"{chat_id}: {exc}")
+    return {"ok": True, "sent": ok, "failed": fail, "total": len(user_ids), "errors": failed[:10]}
 
 
 def save_gpt_marks(data: Dict[str, Any]) -> Dict[str, Any]:
