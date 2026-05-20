@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Card, CardContent } from "../ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
-import { Button } from "../ui/button";
-import { Badge } from "../ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
-import { Input } from "../ui/input";
 import { ClipboardList, Search } from "lucide-react";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { Card, CardContent } from "../ui/card";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Input } from "../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../api";
 
 type OrderStatus = "PENDING" | "PAID" | "DELIVERED" | "EXPIRED" | "CANCELLED";
@@ -17,7 +17,7 @@ interface Props {
   data: AdminSnapshot | null;
   adminKey: string;
   refresh: () => Promise<void>;
-  preset?: { status?: string; nonce: number };
+  preset?: { status?: string; dateKey?: string; dateField?: "created_at" | "delivered_at"; nonce: number };
 }
 
 const ALL_STATUSES: OrderStatus[] = ["PENDING", "PAID", "DELIVERED", "EXPIRED", "CANCELLED"];
@@ -28,9 +28,17 @@ function materialKey(value: any) {
   return firstPart.toLowerCase();
 }
 
+function dateKey(value: any) {
+  const raw = String(value || "").trim();
+  const hit = raw.match(/\d{4}-\d{2}-\d{2}/);
+  return hit?.[0] || "";
+}
+
 export function Orders({ data, adminKey, refresh, preset }: Props) {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<OrderFilter>("ALL");
+  const [filterDateKey, setFilterDateKey] = useState("");
+  const [filterDateField, setFilterDateField] = useState<"created_at" | "delivered_at">("created_at");
   const [changeModal, setChangeModal] = useState<{ open: boolean; order: AnyRow | null }>({ open: false, order: null });
   const [newStatus, setNewStatus] = useState<OrderStatus>("DELIVERED");
   const [busy, setBusy] = useState(false);
@@ -50,7 +58,7 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
       }
       setDieKeys(keys);
     } catch {
-      // Keep the orders page usable when materials are temporarily unavailable.
+      // Keep the orders page usable when marks are temporarily unavailable.
     }
   }, [adminKey]);
 
@@ -62,7 +70,9 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
     if (!preset?.nonce) return;
     const status = (preset.status || "ALL").toUpperCase() as OrderFilter;
     setFilterStatus(status === "FAILED" || ALL_STATUSES.includes(status as OrderStatus) ? status : "ALL");
-  }, [preset?.nonce, preset?.status]);
+    setFilterDateKey(preset.dateKey || "");
+    setFilterDateField(preset.dateField || "created_at");
+  }, [preset?.dateField, preset?.dateKey, preset?.nonce, preset?.status]);
 
   const usersById = useMemo(() => {
     const map = new Map<string, AnyRow>();
@@ -95,12 +105,8 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
       const orderId = text(order.order_id);
       const deliverText = String(order.deliver_text || "");
       if (orderId === "—" || !deliverText) continue;
-      const dieLines = deliverText
-        .split(/\r?\n/)
-        .filter((line) => dieKeys.has(materialKey(line)));
-      if (dieLines.length) {
-        counts.set(orderId, Math.max(counts.get(orderId) || 0, dieLines.length));
-      }
+      const dieLines = deliverText.split(/\r?\n/).filter((line) => dieKeys.has(materialKey(line)));
+      if (dieLines.length) counts.set(orderId, Math.max(counts.get(orderId) || 0, dieLines.length));
     }
     return counts;
   }, [data?.deliveries, data?.fulfillments, data?.orders, data?.pool, dieKeys]);
@@ -110,6 +116,12 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
     const status = text(order.status).toUpperCase();
     if (filterStatus === "FAILED" && !["EXPIRED", "CANCELLED"].includes(status)) return false;
     if (filterStatus !== "ALL" && filterStatus !== "FAILED" && status !== filterStatus) return false;
+    if (filterDateKey) {
+      const dateValue = filterDateField === "delivered_at"
+        ? order.delivered_at || order.paid_at || order.created_at
+        : order.created_at;
+      if (dateKey(dateValue) !== filterDateKey) return false;
+    }
     const user = usersById.get(text(order.user_id));
     const hay = `${text(order.order_id)} ${text(order.user_id)} ${text(user?.username)} ${text(user?.full_name)} ${text(order.stock_code)}`.toLowerCase();
     return !search || hay.includes(search.toLowerCase());
@@ -153,6 +165,12 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
             {ALL_STATUSES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
           </SelectContent>
         </Select>
+        {filterDateKey && (
+          <Button variant="secondary" size="sm" className="h-10 gap-2" onClick={() => setFilterDateKey("")}>
+            {filterDateField === "delivered_at" ? "Giao ngày" : "Tạo ngày"} {filterDateKey}
+            <span className="text-muted-foreground">×</span>
+          </Button>
+        )}
       </div>
 
       <Card className="shadow-sm">

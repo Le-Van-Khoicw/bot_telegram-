@@ -11,8 +11,6 @@ import { Materials } from "./components/sections/Materials";
 import { GptPlusCheck } from "./components/sections/GptPlusCheck";
 import { Orders } from "./components/sections/Orders";
 import { Users } from "./components/sections/Users";
-import { Reservations } from "./components/sections/Reservations";
-import { Fulfillments } from "./components/sections/Fulfillments";
 import { Button } from "./components/ui/button";
 import { adminApi, money, text, type AdminSnapshot } from "./api";
 import { clearToken, getToken, saveToken } from "./utils/auth";
@@ -27,7 +25,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [newCount, setNewCount] = useState(0);
   const [inventoryPreset, setInventoryPreset] = useState<{ status?: string; stockCode?: string; nonce: number }>({ nonce: 0 });
-  const [orderPreset, setOrderPreset] = useState<{ status?: string; nonce: number }>({ nonce: 0 });
+  const [orderPreset, setOrderPreset] = useState<{ status?: string; dateKey?: string; dateField?: "created_at" | "delivered_at"; nonce: number }>({ nonce: 0 });
 
   // ✅ NEW: Notification management
   const [notifications, setNotifications] = useState<Notification[]>(() => {
@@ -217,7 +215,7 @@ export default function App() {
 
   // ✅ NEW: Handle notification selection
   const handleSelectNotification = (orderId: string) => {
-    setOrderPreset({ status: undefined, nonce: Date.now() });
+    setOrderPreset({ status: undefined, dateKey: undefined, dateField: undefined, nonce: Date.now() });
     setSection("orders");
     // Scroll to selected order (optional, can be improved)
     setTimeout(() => {
@@ -240,8 +238,8 @@ export default function App() {
       case "overview": return (
         <Overview
           data={data}
-          onOpenOrders={(status) => {
-            setOrderPreset({ status, nonce: Date.now() });
+          onOpenOrders={(preset) => {
+            setOrderPreset({ ...preset, nonce: Date.now() });
             setSection("orders");
           }}
           onOpenInventory={(status, stockCode) => {
@@ -257,8 +255,6 @@ export default function App() {
       case "gptPlus": return <GptPlusCheck adminKey={adminKey} refresh={refresh} />;
       case "orders": return <Orders {...common} preset={orderPreset} />;
       case "users": return <Users data={data} />;
-      case "reservations": return <Reservations data={data} />;
-      case "fulfillments": return <Fulfillments data={data} />;
     }
   };
 

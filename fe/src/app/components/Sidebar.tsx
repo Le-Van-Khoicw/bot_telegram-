@@ -1,6 +1,6 @@
-import { LayoutDashboard, Package, Warehouse, ClipboardList, Users, BookMarked, Truck, LogOut, Menu, X, ClipboardCheck, MailCheck } from "lucide-react";
-import { Button } from "./ui/button";
 import { type ReactNode, useState } from "react";
+import { ClipboardCheck, ClipboardList, LayoutDashboard, LogOut, MailCheck, Menu, Package, Users, Warehouse, X } from "lucide-react";
+import { Button } from "./ui/button";
 
 export type AdminSection =
   | "overview"
@@ -9,9 +9,7 @@ export type AdminSection =
   | "materials"
   | "gptPlus"
   | "orders"
-  | "users"
-  | "reservations"
-  | "fulfillments";
+  | "users";
 
 export const NAV_ITEMS: { id: AdminSection; label: string; icon: ReactNode }[] = [
   { id: "overview", label: "Tổng quan", icon: <LayoutDashboard size={18} /> },
@@ -21,8 +19,6 @@ export const NAV_ITEMS: { id: AdminSection; label: string; icon: ReactNode }[] =
   { id: "gptPlus", label: "Check GPT Plus", icon: <MailCheck size={18} /> },
   { id: "orders", label: "Đơn hàng", icon: <ClipboardList size={18} /> },
   { id: "users", label: "Khách hàng", icon: <Users size={18} /> },
-  { id: "reservations", label: "Giữ hàng", icon: <BookMarked size={18} /> },
-  { id: "fulfillments", label: "Giao hàng", icon: <Truck size={18} /> },
 ];
 
 interface SidebarProps {
