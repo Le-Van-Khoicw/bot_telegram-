@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "../ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Button } from "../ui/button";
@@ -18,6 +18,8 @@ interface Props {
   preset?: { status?: string; stockCode?: string; nonce: number };
 }
 
+type MaterialItem = { value: string; status?: string; note?: string };
+
 const normalizeCode = (value: any) => text(value).trim().toUpperCase();
 const isRealCode = (value: string) => value !== "—" && value !== "â€”";
 const stockItemKey = (value: any) => {
@@ -35,6 +37,29 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
   const [filterCode, setFilterCode] = useState("ALL");
   const [releaseOrderId, setReleaseOrderId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [dieKeys, setDieKeys] = useState<Set<string>>(new Set());
+
+  const loadDieMaterials = useCallback(async () => {
+    if (!adminKey) return;
+    try {
+      const response = await adminApi<{ items?: MaterialItem[] }>("/admin/api/materials", adminKey);
+      const keys = new Set<string>();
+      for (const item of response.items || []) {
+        const status = String(item.status || "").toUpperCase();
+        const note = String(item.note || "").toUpperCase();
+        if (status !== "BAD" || !note.includes("OPENAI_DIE")) continue;
+        const key = stockItemKey(item.value);
+        if (key) keys.add(key);
+      }
+      setDieKeys(keys);
+    } catch {
+      // Keep inventory usable when materials are temporarily unavailable.
+    }
+  }, [adminKey]);
+
+  useEffect(() => {
+    void loadDieMaterials();
+  }, [loadDieMaterials]);
 
   const pool = data?.pool || [];
   const productCodes = useMemo(
@@ -50,6 +75,7 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
     HELD: pool.filter((i) => text(i.status).toUpperCase() === "HELD").length,
     SOLD: pool.filter((i) => text(i.status).toUpperCase() === "SOLD").length,
   };
+  const dieCount = pool.filter((i) => dieKeys.has(stockItemKey(i.secret))).length;
   const addLineCount = countLines(addData);
   const duplicateLineCount = countLines(duplicateData);
 
@@ -211,6 +237,9 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
             <Badge variant="outline" className="h-9 px-3">
               Đang hiện {visible.length}/{pool.length}
             </Badge>
+            <Badge variant="destructive" className="h-9 px-3">
+              Die {dieCount}
+            </Badge>
           </div>
 
           <Card className="shadow-sm">
@@ -233,8 +262,12 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                     const itemId = text(item.item_id);
                     const secret = text(item.secret);
                     const status = text(item.status).toUpperCase();
+                    const isDie = dieKeys.has(stockItemKey(secret));
                     return (
-                      <TableRow key={`${itemId}-${normalizeCode(item.stock_code)}-${index}-${secret.slice(0, 24)}`}>
+                      <TableRow
+                        key={`${itemId}-${normalizeCode(item.stock_code)}-${index}-${secret.slice(0, 24)}`}
+                        className={isDie ? "bg-red-50/70 hover:bg-red-50" : ""}
+                      >
                         <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{itemId}</code></TableCell>
                         <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{text(item.stock_code)}</code></TableCell>
                         <TableCell
@@ -242,7 +275,10 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                           title="Chạm để copy"
                           onClick={() => copyStockSecret(secret)}
                         >
-                          {secret}
+                          <span className="inline-flex min-w-0 max-w-full items-center gap-2">
+                            <span className="truncate">{secret}</span>
+                            {isDie && <Badge variant="destructive" className="shrink-0">Die</Badge>}
+                          </span>
                         </TableCell>
                         <TableCell className="text-center"><StockBadge status={text(item.status)} /></TableCell>
                         <TableCell className="text-xs text-muted-foreground">{text(item.hold_order_id)}</TableCell>

@@ -254,7 +254,7 @@ export default function App() {
       case "products": return <Products {...common} />;
       case "inventory": return <Inventory {...common} preset={inventoryPreset} />;
       case "materials": return <Materials {...common} />;
-      case "gptPlus": return <GptPlusCheck adminKey={adminKey} />;
+      case "gptPlus": return <GptPlusCheck adminKey={adminKey} refresh={refresh} />;
       case "orders": return <Orders {...common} preset={orderPreset} />;
       case "users": return <Users data={data} />;
       case "reservations": return <Reservations data={data} />;
