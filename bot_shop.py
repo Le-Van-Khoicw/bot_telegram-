@@ -184,6 +184,33 @@ async def notify_admins(context: ContextTypes.DEFAULT_TYPE, text: str, reply_mar
         except Exception as e:
             logger.warning("notify admin failed admin_id=%s: %s", admin_id, e)
 
+
+async def admin_customer_text(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
+    username = ""
+    full_name = ""
+    try:
+        chat = await context.bot.get_chat(user_id)
+        username = (chat.username or "").strip()
+        full_name = (chat.full_name or "").strip()
+    except Exception:
+        pass
+
+    if not username and not full_name:
+        try:
+            profile = await gs_call(get_user_profile, user_id)
+            username = (profile.get("username") or "").strip()
+            full_name = (profile.get("full_name") or profile.get("name") or "").strip()
+        except Exception:
+            pass
+
+    parts = []
+    if username:
+        parts.append(f"@{username.lstrip('@')}")
+    if full_name:
+        parts.append(full_name)
+    parts.append(str(user_id))
+    return " | ".join(parts)
+
 async def gs_call(fn, *args, **kwargs):
     # ✅ serialize gspread calls + chạy trong thread để bot không bị đơ
     async with SHEETS_LOCK:
@@ -406,6 +433,18 @@ def get_all_user_chat_ids() -> List[int]:
         if cid.isdigit():
             out.append(int(cid))
     return out
+
+
+def get_user_profile(chat_id: int) -> Dict[str, str]:
+    init_sheets()
+    if not _ws_users:
+        return {}
+    target = str(chat_id)
+    for row in get_all_records(_ws_users):
+        cid = (row.get("chat_id") or row.get("user_id") or "").strip()
+        if cid == target:
+            return row
+    return {}
 
 # def init_sheets():
 #     global _gs_client, _gs_sheet, _ws_orders, _ws_products, _ws_pool, _ws_res, _ws_users
@@ -1693,6 +1732,20 @@ async def ttl_job(context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu_keyboard(),
     )
 
+    customer_text = await admin_customer_text(context, user_id)
+    await notify_admins(
+        context,
+        (
+            "⌛ *Đơn hết hạn đã huỷ*\n"
+            f"Order: `{escape_markdown(order_id, version=2)}`\n"
+            f"Khách: {escape_markdown(customer_text, version=2)}\n"
+            f"Stock: `{escape_markdown(str(order.get('stock_code', '')), version=2)}`\n"
+            f"SL: `{escape_markdown(str(order.get('qty', '')), version=2)}`\n"
+            f"Tổng: *{escape_markdown(money_vnd(order.get('total', 0)), version=2)}*\n"
+            f"Trả kho: *{released}* item"
+        ),
+    )
+
 async def schedule_ttl(app: Application, user_id: int, order_id: str):
     if not app.job_queue:
         return
@@ -1892,12 +1945,13 @@ async def checkout_flow(
             name=f"countdown_{order_id}",
         )
 
+    customer_text = await admin_customer_text(context, user_id)
     await notify_admins(
         context,
         (
             "🛒 *Đơn mới đang chờ thanh toán*\n"
             f"Order: `{escape_markdown(order_id, version=2)}`\n"
-            f"Khách: `{user_id}`\n"
+            f"Khách: {escape_markdown(customer_text, version=2)}\n"
             f"Sản phẩm: {escape_markdown(str(product.get('name', product['stock_code'])), version=2)}\n"
             f"Stock: `{escape_markdown(str(product['stock_code']), version=2)}`\n"
             f"SL: `{qty}`\n"
@@ -2309,6 +2363,23 @@ async def release_overdue_pending_job(context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception:
                 pass
+
+        if user_id_s.isdigit():
+            customer_text = await admin_customer_text(context, int(user_id_s))
+        else:
+            customer_text = user_id_s or "unknown"
+        await notify_admins(
+            context,
+            (
+                "⌛ *Đơn hết hạn đã huỷ*\n"
+                f"Order: `{escape_markdown(order_id, version=2)}`\n"
+                f"Khách: {escape_markdown(customer_text, version=2)}\n"
+                f"Stock: `{escape_markdown(str(order.get('stock_code', '')), version=2)}`\n"
+                f"SL: `{escape_markdown(str(order.get('qty', '')), version=2)}`\n"
+                f"Tổng: *{escape_markdown(money_vnd(order.get('total', 0)), version=2)}*\n"
+                f"Trả kho: *{released}* item"
+            ),
+        )
 
     if expired_count:
         logger.info("✅ Auto released overdue orders=%s items=%s", expired_count, released_total)
