@@ -92,6 +92,19 @@ export function GptPlusCheck({ adminKey }: Props) {
     toast.success("Đã copy");
   };
 
+  const copyBannedNotes = async () => {
+    const content = bannedResults
+      .map((row, index) => {
+        const reason = row.matched?.subject || row.matched?.preview || row.label || "Acc die";
+        const time = row.matched?.time ? ` | ${row.matched.time}` : "";
+        return `${index + 1}. ${row.email} | DIE | ${reason}${time}`;
+      })
+      .join("\n");
+    if (!content) return toast.info("Không có acc die để note");
+    await navigator.clipboard.writeText(content);
+    toast.success("Đã copy note acc die");
+  };
+
   const copyOne = async (row: CheckResult) => {
     await navigator.clipboard.writeText(lineFor(row));
     toast.success("Đã copy 1 dòng");
@@ -176,6 +189,14 @@ export function GptPlusCheck({ adminKey }: Props) {
           <div className="flex flex-wrap gap-2">
             <Button className="gap-2" onClick={runCheck} disabled={busy || !raw.trim()}>
               <Search size={15} /> {busy ? "Đang check..." : "Check GPT Plus"}
+            </Button>
+            <Button
+              className="gap-2 border-red-200 text-red-700 hover:bg-red-50"
+              variant="outline"
+              onClick={copyBannedNotes}
+              disabled={bannedResults.length === 0}
+            >
+              <Copy size={15} /> Copy note die
             </Button>
             <Button variant="ghost" onClick={clearAll}>Xóa</Button>
           </div>
