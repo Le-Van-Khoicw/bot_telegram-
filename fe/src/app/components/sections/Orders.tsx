@@ -34,6 +34,13 @@ function dateKey(value: any) {
   return hit?.[0] || "";
 }
 
+function vnDay(offsetDays = 0) {
+  const nowKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+  const base = new Date(`${nowKey}T00:00:00+07:00`);
+  base.setDate(base.getDate() + offsetDays);
+  return base.toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+}
+
 export function Orders({ data, adminKey, refresh, preset }: Props) {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<OrderFilter>("ALL");
@@ -112,6 +119,15 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
   }, [data?.deliveries, data?.fulfillments, data?.orders, data?.pool, dieKeys]);
 
   const orders = data?.orders || [];
+  const dayButtons = [
+    { label: "Hôm nay", key: vnDay(0) },
+    { label: "Hôm qua", key: vnDay(-1) },
+    { label: "Hôm kia", key: vnDay(-2) },
+  ].map((item) => ({
+    ...item,
+    count: orders.filter((order) => dateKey(order.created_at) === item.key).length,
+  }));
+
   const visible = orders.filter((order) => {
     const status = text(order.status).toUpperCase();
     if (filterStatus === "FAILED" && !["EXPIRED", "CANCELLED"].includes(status)) return false;
@@ -148,6 +164,11 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
     }
   };
 
+  const applyDayFilter = (key: string) => {
+    setFilterDateKey(key);
+    setFilterDateField("created_at");
+  };
+
   return (
     <div className="space-y-4">
       <h2 className="flex items-center gap-2"><ClipboardList size={20} /> Đơn hàng</h2>
@@ -165,6 +186,17 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
             {ALL_STATUSES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
           </SelectContent>
         </Select>
+        {dayButtons.map((item) => (
+          <Button
+            key={item.key}
+            variant={filterDateKey === item.key && filterDateField === "created_at" ? "default" : "outline"}
+            size="sm"
+            className="h-10"
+            onClick={() => applyDayFilter(item.key)}
+          >
+            {item.label}: {item.count}
+          </Button>
+        ))}
         {filterDateKey && (
           <Button variant="secondary" size="sm" className="h-10 gap-2" onClick={() => setFilterDateKey("")}>
             {filterDateField === "delivered_at" ? "Giao ngày" : "Tạo ngày"} {filterDateKey}

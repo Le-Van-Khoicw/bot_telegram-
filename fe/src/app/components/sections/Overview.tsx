@@ -2,7 +2,7 @@ import { Badge } from "../ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { CheckCircle, Clock, DollarSign, Package, ShoppingCart, Users, Warehouse, XCircle } from "lucide-react";
-import { money, text, type AdminSnapshot, type AnyRow } from "../../api";
+import { money, text, type AdminSnapshot } from "../../api";
 
 interface OverviewProps {
   data: AdminSnapshot | null;
@@ -17,22 +17,8 @@ function dateKey(value: any) {
   return hit?.[0] || "";
 }
 
-function vnToday(offsetDays = 0) {
-  const nowKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
-  const base = new Date(`${nowKey}T00:00:00+07:00`);
-  base.setDate(base.getDate() + offsetDays);
-  return base.toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
-}
-
-function countOrdersByCreated(rows: AnyRow[], key: string) {
-  return rows.filter((order) => dateKey(order.created_at) === key).length;
-}
-
-function deliveredRowsByDate(rows: AnyRow[], key: string) {
-  return rows.filter((order) => {
-    const status = text(order.status).toUpperCase();
-    return status === "DELIVERED" && dateKey(order.delivered_at || order.paid_at || order.created_at) === key;
-  });
+function vnToday() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
 }
 
 export function Overview({ data, onOpenOrders, onOpenInventory, onOpenUsers }: OverviewProps) {
@@ -40,23 +26,15 @@ export function Overview({ data, onOpenOrders, onOpenInventory, onOpenUsers }: O
 
   const s = data.summary;
   const c = s.status_counts || {};
-  const orders = data.orders || [];
-  const today = vnToday(0);
-  const yesterday = vnToday(-1);
-  const beforeYesterday = vnToday(-2);
-  const deliveredToday = deliveredRowsByDate(orders, today);
-  const todayRevenue = deliveredToday.reduce((sum, order) => sum + Number(order.total || 0), 0);
-
-  const dayCards = [
-    { title: "Doanh thu hôm nay", value: money(todayRevenue), sub: `${deliveredToday.length} đơn đã giao`, icon: <DollarSign size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", onClick: () => onOpenOrders?.({ status: "DELIVERED", dateKey: today, dateField: "delivered_at" }) },
-    { title: "Đơn hôm nay", value: countOrdersByCreated(orders, today), sub: today, icon: <ShoppingCart size={20} />, color: "text-blue-600", bg: "bg-blue-50", onClick: () => onOpenOrders?.({ dateKey: today, dateField: "created_at" }) },
-    { title: "Đơn hôm qua", value: countOrdersByCreated(orders, yesterday), sub: yesterday, icon: <Clock size={20} />, color: "text-amber-600", bg: "bg-amber-50", onClick: () => onOpenOrders?.({ dateKey: yesterday, dateField: "created_at" }) },
-    { title: "Đơn hôm kia", value: countOrdersByCreated(orders, beforeYesterday), sub: beforeYesterday, icon: <Clock size={20} />, color: "text-slate-600", bg: "bg-slate-100", onClick: () => onOpenOrders?.({ dateKey: beforeYesterday, dateField: "created_at" }) },
-  ];
+  const today = vnToday();
+  const todayRevenue = (data.orders || [])
+    .filter((order) => text(order.status).toUpperCase() === "DELIVERED")
+    .filter((order) => dateKey(order.delivered_at || order.paid_at || order.created_at) === today)
+    .reduce((sum, order) => sum + Number(order.total || 0), 0);
 
   const cards = [
     { title: "Tổng đơn", value: s.orders, icon: <ShoppingCart size={20} />, color: "text-blue-600", bg: "bg-blue-50", onClick: () => onOpenOrders?.() },
-    { title: "Doanh thu", value: money(s.revenue), icon: <DollarSign size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", onClick: () => onOpenOrders?.({ status: "DELIVERED" }) },
+    { title: "Doanh thu hôm nay", value: money(todayRevenue), icon: <DollarSign size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", onClick: () => onOpenOrders?.({ status: "DELIVERED", dateKey: today, dateField: "delivered_at" }) },
     { title: "PENDING", value: c.PENDING || 0, icon: <Clock size={20} />, color: "text-amber-600", bg: "bg-amber-50", onClick: () => onOpenOrders?.({ status: "PENDING" }) },
     { title: "DELIVERED", value: c.DELIVERED || 0, icon: <CheckCircle size={20} />, color: "text-green-600", bg: "bg-green-50", onClick: () => onOpenOrders?.({ status: "DELIVERED" }) },
     { title: "Lỗi / hủy", value: (c.EXPIRED || 0) + (c.CANCELLED || 0), icon: <XCircle size={20} />, color: "text-red-600", bg: "bg-red-50", onClick: () => onOpenOrders?.({ status: "FAILED" }) },
@@ -68,23 +46,6 @@ export function Overview({ data, onOpenOrders, onOpenInventory, onOpenUsers }: O
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {dayCards.map((card) => (
-          <Card key={card.title} onClick={card.onClick} className="shadow-sm cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md">
-            <CardHeader className="pb-1 pt-4 px-4">
-              <div className="flex items-center justify-between gap-2">
-                <CardTitle className="text-xs text-muted-foreground">{card.title}</CardTitle>
-                <div className={`${card.bg} ${card.color} p-1.5 rounded-md`}>{card.icon}</div>
-              </div>
-            </CardHeader>
-            <CardContent className="px-4 pb-4">
-              <p className={`text-xl font-semibold ${card.color} truncate`}>{card.value}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{card.sub}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {cards.map((card) => (
           <Card key={card.title} onClick={card.onClick} className="shadow-sm cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md">
