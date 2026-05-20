@@ -5,6 +5,7 @@ import asyncio
 import logging
 import json
 from datetime import datetime, timedelta
+from html import escape as html_escape
 from gspread.cell import Cell
 from typing import Any, Dict, Optional, List, Tuple
 from zoneinfo import ZoneInfo
@@ -518,6 +519,24 @@ def caption_delivered(order_id: str, stock_code: str, qty: int) -> str:
     )
 
 
+def delivery_copy_message(order_id: str, stock_code: str, qty: int, delivered_at: str, lines_plain: List[str]) -> str:
+    copy_block = "\n".join(lines_plain).strip() or "(trống)"
+    return (
+        "✅ MUA HÀNG THÀNH CÔNG\n\n"
+        f"🧾 Mã đơn: {html_escape(order_id)}\n"
+        f"📦 SP: {html_escape(stock_code)}\n"
+        f"🔢 SL: {qty}\n"
+        f"⏱ Thời gian: {html_escape(delivered_at)}\n\n"
+        "📋 COPY ĐƠN VỪA MUA:\n"
+        f"<pre>{html_escape(copy_block)}</pre>\n"
+        "🔐 Lấy OTP ngay tại bot:\n"
+        "1. Chạm giữ khối đơn ở trên rồi Sao chép.\n"
+        "2. Dán thẳng vào bot này.\n"
+        "3. Bot sẽ tự đọc mail hoặc lấy mã 2FA nếu đơn có dữ liệu phù hợp.\n\n"
+        "🔐 Nếu là tài khoản, vui lòng đổi mật khẩu ngay sau khi đăng nhập."
+    )
+
+
 async def gs_call(fn, *args, **kwargs):
     async with SHEETS_LOCK:
         return await asyncio.to_thread(fn, *args, **kwargs)
@@ -589,23 +608,16 @@ async def send_delivery_message(user_id: int, order_id: str, stock_code: str, qt
         + "\n"
     )
 
-    direct_text = (
-        "✅ MUA HÀNG THÀNH CÔNG\n\n"
-        f"🧾 Mã đơn: {order_id}\n"
-        f"📦 SP: {stock_code}\n"
-        f"🔢 SL: {qty}\n\n"
-        "🎁 THÔNG TIN NHẬN ĐƯỢC - BẤM GIỮ ĐỂ COPY:\n"
-        "====================\n"
-        f"{chr(10).join(lines_plain)}\n\n"
-        "🔐 Nếu là tài khoản, vui lòng đổi mật khẩu ngay sau khi đăng nhập."
-    )
+    direct_text = delivery_copy_message(order_id, stock_code, qty, delivered_at, lines_plain)
 
     sent_any = False
     try:
         for start in range(0, len(direct_text), 3800):
+            chunk = direct_text[start:start + 3800]
             await tg_bot.send_message(
                 chat_id=user_id,
-                text=direct_text[start:start + 3800],
+                text=chunk,
+                parse_mode=ParseMode.HTML if len(direct_text) <= 3800 else None,
                 reply_markup=kb_support_only() if start + 3800 >= len(direct_text) else None,
                 disable_web_page_preview=True,
             )
@@ -625,6 +637,7 @@ async def send_delivery_message(user_id: int, order_id: str, stock_code: str, qt
             f"📦 SP: {stock_code}\n\n"
             f"🔢 SL: {qty}\n\n\n"
             "📄 File .txt dự phòng, nếu muốn tải/copy toàn bộ.\n\n"
+            "🔐 Lấy OTP: copy đơn vừa mua ở tin nhắn trên rồi dán thẳng vào bot.\n\n"
             "🔐 Nếu là tài khoản, vui lòng đổi mật khẩu ngay sau khi đăng nhập.\n\n"
             "❗ Nếu tài khoản lỗi/không đăng nhập được hoặc có vấn đề, hãy bấm Hỗ trợ bên dưới."
 )
