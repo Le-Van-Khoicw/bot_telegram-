@@ -1090,6 +1090,16 @@ def quick_actions_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def mail_retry_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Đọc lại mail này", callback_data="mail_repeat")],
+        [
+            InlineKeyboardButton("🛍 Sản phẩm", callback_data="go_products"),
+            InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main"),
+        ],
+    ])
+
+
 def buy_suggestion_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🛒 Đi mua hàng", callback_data="go_products")],
@@ -1444,20 +1454,26 @@ async def render_mail_result(loading_msg, raw: str):
     try:
         result = await asyncio.to_thread(read_inbox_messages, raw, 1)
     except MailReaderError as e:
-        await loading_msg.edit_text(f"Không đọc được mail:\n{e}", reply_markup=quick_actions_kb())
+        await loading_msg.edit_text(
+            f"❌ Không đọc được mail:\n{e}\n\nBạn bấm Đọc lại mail này để thử lại, khỏi cần dán lại chuỗi mail.",
+            reply_markup=mail_retry_kb(),
+        )
         return
     except Exception as e:
         logger.exception("cmd_mail failed")
-        await loading_msg.edit_text(f"Lỗi không xác định khi đọc mail:\n{e}", reply_markup=quick_actions_kb())
+        await loading_msg.edit_text(
+            f"❌ Lỗi không xác định khi đọc mail:\n{e}\n\nBạn bấm Đọc lại mail này để thử lại, khỏi cần dán lại chuỗi mail.",
+            reply_markup=mail_retry_kb(),
+        )
         return
 
     email = escape_markdown(result.get("email", ""), version=2)
     messages = result.get("messages") or []
     if not messages:
         await loading_msg.edit_text(
-            f"Không thấy mail nào trong inbox của `{email}`.",
+            f"Không thấy mail nào trong inbox của `{email}`\\.",
             parse_mode="MarkdownV2",
-            reply_markup=quick_actions_kb(),
+            reply_markup=mail_retry_kb(),
         )
         return
 
@@ -1491,12 +1507,21 @@ async def render_mail_result(loading_msg, raw: str):
     if len(text) > 3900:
         text = text[:3900] + "\n..."
 
-    await loading_msg.edit_text(
-        text,
-        parse_mode="MarkdownV2",
-        disable_web_page_preview=True,
-        reply_markup=quick_actions_kb(),
-    )
+    try:
+        await loading_msg.edit_text(
+            text,
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True,
+            reply_markup=quick_actions_kb(),
+        )
+    except Exception as exc:
+        logger.exception("render mail markdown failed")
+        safe_email = result.get("email", "")
+        await loading_msg.edit_text(
+            f"❌ Đọc được mail nhưng lỗi định dạng hiển thị Telegram.\nMail: {safe_email}\nLỗi: {exc}",
+            disable_web_page_preview=True,
+            reply_markup=mail_retry_kb(),
+        )
 
 
 async def read_mail_from_text(update: Update, raw: str):

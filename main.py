@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request
 from telegram import Update
 
 from admin_dashboard import register_admin_routes
-from bot_shop import build_application, main as start_bot_logic
+from bot_shop import build_application, main as start_bot_logic, setup_bot_commands
 from sepay_webhook import process_payment, set_telegram_bot, verify_sepay_auth
 
 logging.basicConfig(level=logging.INFO)
@@ -103,6 +103,7 @@ async def startup_telegram_webhook():
     webhook_url = f"{base_url}{telegram_webhook_path()}"
     telegram_app = build_application()
     await telegram_app.initialize()
+    await setup_bot_commands(telegram_app)
     set_telegram_bot(telegram_app.bot)
     await telegram_app.bot.set_webhook(webhook_url, drop_pending_updates=True)
     await telegram_app.start()
