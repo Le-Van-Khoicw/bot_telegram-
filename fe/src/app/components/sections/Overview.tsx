@@ -11,30 +11,15 @@ interface OverviewProps {
   onOpenUsers?: () => void;
 }
 
-function dateKey(value: any) {
-  const raw = String(value || "").trim();
-  const hit = raw.match(/\d{4}-\d{2}-\d{2}/);
-  return hit?.[0] || "";
-}
-
-function vnToday() {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
-}
-
 export function Overview({ data, onOpenOrders, onOpenInventory, onOpenUsers }: OverviewProps) {
   if (!data) return <EmptyState />;
 
   const s = data.summary;
   const c = s.status_counts || {};
-  const today = vnToday();
-  const todayRevenue = (data.orders || [])
-    .filter((order) => text(order.status).toUpperCase() === "DELIVERED")
-    .filter((order) => dateKey(order.delivered_at || order.paid_at || order.created_at) === today)
-    .reduce((sum, order) => sum + Number(order.total || 0), 0);
 
   const cards = [
     { title: "Tổng đơn", value: s.orders, icon: <ShoppingCart size={20} />, color: "text-blue-600", bg: "bg-blue-50", onClick: () => onOpenOrders?.() },
-    { title: "Doanh thu hôm nay", value: money(todayRevenue), icon: <DollarSign size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", onClick: () => onOpenOrders?.({ status: "DELIVERED", dateKey: today, dateField: "delivered_at" }) },
+    { title: "Tổng doanh thu", value: money(s.revenue), icon: <DollarSign size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", onClick: () => onOpenOrders?.({ status: "DELIVERED" }) },
     { title: "PENDING", value: c.PENDING || 0, icon: <Clock size={20} />, color: "text-amber-600", bg: "bg-amber-50", onClick: () => onOpenOrders?.({ status: "PENDING" }) },
     { title: "DELIVERED", value: c.DELIVERED || 0, icon: <CheckCircle size={20} />, color: "text-green-600", bg: "bg-green-50", onClick: () => onOpenOrders?.({ status: "DELIVERED" }) },
     { title: "Lỗi / hủy", value: (c.EXPIRED || 0) + (c.CANCELLED || 0), icon: <XCircle size={20} />, color: "text-red-600", bg: "bg-red-50", onClick: () => onOpenOrders?.({ status: "FAILED" }) },

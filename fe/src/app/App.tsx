@@ -253,7 +253,7 @@ export default function App() {
       case "inventory": return <Inventory {...common} preset={inventoryPreset} />;
       case "materials": return <Materials {...common} />;
       case "gptPlus": return <GptPlusCheck adminKey={adminKey} refresh={refresh} />;
-      case "orders": return <Orders {...common} preset={orderPreset} />;
+      case "orders": return <Orders {...common} preset={orderPreset} onBack={() => setSection("overview")} />;
       case "users": return <Users data={data} />;
     }
   };

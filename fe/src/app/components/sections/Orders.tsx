@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ClipboardList, Search } from "lucide-react";
+import { ArrowLeft, ClipboardList, DollarSign, Search, ShoppingCart } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
@@ -18,6 +18,7 @@ interface Props {
   adminKey: string;
   refresh: () => Promise<void>;
   preset?: { status?: string; dateKey?: string; dateField?: "created_at" | "delivered_at"; nonce: number };
+  onBack?: () => void;
 }
 
 const ALL_STATUSES: OrderStatus[] = ["PENDING", "PAID", "DELIVERED", "EXPIRED", "CANCELLED"];
@@ -41,7 +42,7 @@ function vnDay(offsetDays = 0) {
   return base.toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
 }
 
-export function Orders({ data, adminKey, refresh, preset }: Props) {
+export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<OrderFilter>("ALL");
   const [filterDateKey, setFilterDateKey] = useState("");
@@ -119,14 +120,12 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
   }, [data?.deliveries, data?.fulfillments, data?.orders, data?.pool, dieKeys]);
 
   const orders = data?.orders || [];
-  const dayButtons = [
-    { label: "Hôm nay", key: vnDay(0) },
-    { label: "Hôm qua", key: vnDay(-1) },
-    { label: "Hôm kia", key: vnDay(-2) },
-  ].map((item) => ({
-    ...item,
-    count: orders.filter((order) => dateKey(order.created_at) === item.key).length,
-  }));
+  const todayKey = vnDay(0);
+  const todayOrderCount = orders.filter((order) => dateKey(order.created_at) === todayKey).length;
+  const todayRevenue = orders
+    .filter((order) => text(order.status).toUpperCase() === "DELIVERED")
+    .filter((order) => dateKey(order.delivered_at || order.paid_at || order.created_at) === todayKey)
+    .reduce((sum, order) => sum + Number(order.total || 0), 0);
 
   const visible = orders.filter((order) => {
     const status = text(order.status).toUpperCase();
@@ -171,7 +170,35 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
 
   return (
     <div className="space-y-4">
-      <h2 className="flex items-center gap-2"><ClipboardList size={20} /> Đơn hàng</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2"><ClipboardList size={20} /> Đơn hàng</h2>
+        {onBack && (
+          <Button variant="outline" size="sm" className="gap-2" onClick={onBack}>
+            <ArrowLeft size={15} /> Quay lại
+          </Button>
+        )}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Card className="shadow-sm">
+          <CardContent className="flex items-center justify-between p-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Doanh thu hôm nay</p>
+              <p className="mt-2 text-lg font-semibold text-emerald-700">{money(todayRevenue)}</p>
+            </div>
+            <div className="rounded-md bg-emerald-50 p-2 text-emerald-600"><DollarSign size={20} /></div>
+          </CardContent>
+        </Card>
+        <Card className="shadow-sm cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md" onClick={() => applyDayFilter(todayKey)}>
+          <CardContent className="flex items-center justify-between p-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Đơn hôm nay</p>
+              <p className="mt-2 text-lg font-semibold text-blue-700">{todayOrderCount}</p>
+            </div>
+            <div className="rounded-md bg-blue-50 p-2 text-blue-600"><ShoppingCart size={20} /></div>
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="flex flex-wrap gap-2">
         <div className="relative">
@@ -186,17 +213,14 @@ export function Orders({ data, adminKey, refresh, preset }: Props) {
             {ALL_STATUSES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
           </SelectContent>
         </Select>
-        {dayButtons.map((item) => (
-          <Button
-            key={item.key}
-            variant={filterDateKey === item.key && filterDateField === "created_at" ? "default" : "outline"}
-            size="sm"
-            className="h-10"
-            onClick={() => applyDayFilter(item.key)}
-          >
-            {item.label}: {item.count}
-          </Button>
-        ))}
+        <Button
+          variant={filterDateKey === todayKey && filterDateField === "created_at" ? "default" : "outline"}
+          size="sm"
+          className="h-10"
+          onClick={() => applyDayFilter(todayKey)}
+        >
+          Hôm nay: {todayOrderCount}
+        </Button>
         {filterDateKey && (
           <Button variant="secondary" size="sm" className="h-10 gap-2" onClick={() => setFilterDateKey("")}>
             {filterDateField === "delivered_at" ? "Giao ngày" : "Tạo ngày"} {filterDateKey}
