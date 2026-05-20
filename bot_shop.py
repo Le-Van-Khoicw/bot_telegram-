@@ -1087,6 +1087,54 @@ def quick_actions_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")],
     ])
 
+
+def buy_suggestion_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛒 Đi mua hàng", callback_data="go_products")],
+        [InlineKeyboardButton("✨ Gợi ý sản phẩm", callback_data="refresh_stock")],
+    ])
+
+
+def stock_update_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛒 Đi mua hàng", callback_data="go_products")],
+        [InlineKeyboardButton("✨ Làm mới gợi ý", callback_data="refresh_stock")],
+    ])
+
+
+async def stock_update_text() -> str:
+    products = await gs_call(load_products_cached)
+    stock_ready = await gs_call(stock_count_ready_by_code_cached)
+    available = [
+        (product, stock_ready.get(product["stock_code"], 0))
+        for product in products
+        if stock_ready.get(product["stock_code"], 0) > 0
+    ]
+    available.sort(key=lambda item: item[1], reverse=True)
+    total = sum(qty for _, qty in available)
+
+    lines = [
+        "📦 *CẬP NHẬT KHO HÀNG ✨*",
+        "",
+        f"🕒 Cập nhật: `{escape_markdown(now_str(), version=1)}`",
+        f"📊 Sản phẩm còn hàng: *{len(available)}* | Tổng tồn: *{total}*",
+        "",
+        "*Tồn kho hiện tại:*",
+        "",
+    ]
+    if not available:
+        lines.append("⛔ Hiện chưa có sản phẩm còn hàng.")
+    else:
+        for product, qty in available[:8]:
+            icon = "🟢" if qty >= 5 else "🟡"
+            lines.append(
+                f"{icon} 📘 *{product['name']}*\n"
+                f"• Số lượng: *{qty}*  • Giá: *{fmt_price(product['price'])}*"
+            )
+    lines.extend(["", "👉 Bấm *Đi mua hàng* để chọn sản phẩm cần mua."])
+    return "\n".join(lines)
+
+
 async def send_support(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         chat_id=chat_id,
@@ -2635,8 +2683,14 @@ async def cmd_hangve(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = " ".join(context.args).strip()
+    reply_markup = buy_suggestion_kb()
     if not text:
-        text = "✅ *HÀNG ĐÃ VỀ*\n\n🔥 Sản phẩm đã có hàng lại!\n👉 Vào /shop để mua nhé."
+        try:
+            text = await stock_update_text()
+            reply_markup = stock_update_kb()
+        except Exception:
+            logger.exception("build stock update failed")
+            text = "✅ *HÀNG ĐÃ VỀ*\n\n🔥 Sản phẩm đã có hàng lại!\n👉 Bấm nút bên dưới để mua nhé."
 
     user_ids = await gs_call(get_all_user_chat_ids)
 
@@ -2647,6 +2701,7 @@ async def cmd_hangve(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=cid,
                 text=text,
                 parse_mode="Markdown",
+                reply_markup=reply_markup,
                 disable_web_page_preview=True,
             )
             ok += 1
@@ -2687,6 +2742,21 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         return await send_support(q.from_user.id, context)
+
+    if data == "refresh_stock":
+        await q.answer("Đang cập nhật kho...")
+        try:
+            text = await stock_update_text()
+            await q.message.edit_text(
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=stock_update_kb(),
+                disable_web_page_preview=True,
+            )
+        except Exception as exc:
+            logger.exception("refresh stock callback failed")
+            await q.answer(f"Lỗi cập nhật kho: {exc}", show_alert=True)
+        return
 
     if data == "mail_help":
         await q.answer()
