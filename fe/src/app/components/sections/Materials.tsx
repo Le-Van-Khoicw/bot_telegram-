@@ -225,6 +225,19 @@ export function Materials({ data, adminKey, refresh }: Props) {
     setAndSave(items.map((item) => item.id === id ? updated : item), { upsertItems: [updated] });
   };
 
+  const deleteOne = async (id: string) => {
+    const target = items.find((item) => item.id === id);
+    if (!target) return;
+    const next = items.filter((item) => item.id !== id);
+    const options = { upsertItems: next, deletedIds: [id], forceClear: next.length === 0 };
+    setItems(next);
+    saveItems(next);
+    pendingSaveRef.current = next;
+    pendingOptionsRef.current = options;
+    const saved = await saveRemote(next, options);
+    if (saved) toast.success("Đã xóa 1 dòng");
+  };
+
   const bulkUpdateStatus = (from: MaterialStatus, to: MaterialStatus) => {
     const changed = items.filter((item) => item.status === from).length;
     if (!changed) return toast.info("Không có dòng nào để chuyển");
@@ -361,10 +374,10 @@ export function Materials({ data, adminKey, refresh }: Props) {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      <Button size="sm" variant="outline" className="gap-1" onClick={() => copyOne(item.value)}><Copy size={14} /> Copy</Button>
                       <Button size="sm" variant="outline" onClick={() => updateStatus(item.id, "OK")}>OK</Button>
                       <Button size="sm" variant="outline" onClick={() => updateStatus(item.id, "BAD")}>Lỗi</Button>
                       <Button size="sm" variant="ghost" onClick={() => updateStatus(item.id, "NEW")}><RotateCcw size={14} /></Button>
+                      <Button size="sm" variant="ghost" className="text-red-700 hover:bg-red-50" onClick={() => deleteOne(item.id)}><Trash2 size={14} /></Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -398,6 +411,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
                   <Button size="sm" variant="outline" className="h-8 w-8 px-0 text-xs" onClick={() => updateStatus(item.id, "OK")}>OK</Button>
                   <Button size="sm" variant="outline" className="h-8 w-8 px-0 text-xs" onClick={() => updateStatus(item.id, "BAD")}>Lỗi</Button>
                   <Button size="sm" variant="ghost" className="h-8 w-8 px-0" onClick={() => updateStatus(item.id, "NEW")}><RotateCcw size={14} /></Button>
+                  <Button size="sm" variant="ghost" className="h-8 w-8 px-0 text-red-700" onClick={() => deleteOne(item.id)}><Trash2 size={14} /></Button>
                 </div>
               </div>
             ))}

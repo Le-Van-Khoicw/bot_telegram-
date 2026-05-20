@@ -130,13 +130,11 @@ def save_gpt_marks(data: Dict[str, Any]) -> Dict[str, Any]:
     blank = [""] * len(GPT_MARK_HEADERS)
     payload = rows + [blank for _ in range(target_rows - len(rows))]
     ws.update(f"A1:F{target_rows}", payload, value_input_option="RAW")
-    cleaned_materials = cleanup_gpt_marks_from_materials()
     return {
         "ok": True,
         "saved": len(rows) - 1,
         "items": rows_to_gpt_marks(rows[1:]),
         "migrated_materials": migrated_count,
-        "cleaned_materials": cleaned_materials,
     }
 
 
