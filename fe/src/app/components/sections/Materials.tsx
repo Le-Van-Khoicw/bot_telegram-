@@ -179,7 +179,8 @@ export function Materials({ data, adminKey, refresh }: Props) {
   useEffect(() => {
     if (!data) return;
     if (pendingSaveRef.current || syncStateRef.current === "saving") return;
-    applyRemoteItems(data.materials || [], false);
+    if (!Array.isArray(data.materials)) return;
+    applyRemoteItems(data.materials, false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.generated_at, applyRemoteItems]);
 

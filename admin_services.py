@@ -380,7 +380,7 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
 
     delivery_rows.sort(key=lambda x: x.get("delivered_at", ""), reverse=True)
 
-    return {
+    result = {
         "generated_at": shop.now_str(),
         "timezone": shop.APP_TIMEZONE,
         "summary": {
@@ -399,8 +399,10 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
         "reservations": reservations[:limit],
         "fulfillments": fulfillments[:limit],
         "deliveries": delivery_rows[:limit],
-        "materials": materials[:pool_limit],
     }
+    if include_materials:
+        result["materials"] = materials[:pool_limit]
+    return result
 
 
 def save_product(data: Dict[str, Any]) -> Dict[str, Any]:
