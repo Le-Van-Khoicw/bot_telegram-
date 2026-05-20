@@ -143,13 +143,14 @@ export function GptPlusCheck({ adminKey, refresh }: Props) {
         };
       });
 
-      const response = await adminApi<{ cleaned_materials?: number }>("/admin/api/gpt-marks", adminKey, {
+      const response = await adminApi<{ cleaned_materials?: number; migrated_materials?: number }>("/admin/api/gpt-marks", adminKey, {
         method: "POST",
         body: JSON.stringify({ items: marks }),
       });
       if (refresh) await refresh();
+      const migrated = response.migrated_materials ? `, chuyển ${response.migrated_materials} dấu cũ` : "";
       const cleaned = response.cleaned_materials ? `, dọn ${response.cleaned_materials} dòng khỏi Nguyên liệu` : "";
-      toast.success(`Đã đánh dấu kho: OK ${plusCount}, Lỗi ${dieCount}${cleaned}`);
+      toast.success(`Đã đánh dấu kho: OK ${plusCount}, Lỗi ${dieCount}${migrated}${cleaned}`);
     } finally {
       setMarkingBusy(false);
     }

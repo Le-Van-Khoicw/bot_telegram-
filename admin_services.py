@@ -83,6 +83,26 @@ def save_gpt_marks(data: Dict[str, Any]) -> Dict[str, Any]:
     by_key = {str(item.get("key") or "").strip().lower(): item for item in current if item.get("key")}
     now = shop.now_str()
 
+    migrated_count = 0
+    for material in load_materials():
+        note = str(material.get("note") or "").strip()
+        note_upper = note.upper()
+        if not note_upper.startswith(("GPT_PLUS", "OPENAI_DIE")):
+            continue
+        value = str(material.get("value") or "").strip()
+        key = _secret_key(value)
+        if not key:
+            continue
+        by_key[key] = {
+            "key": key,
+            "value": value,
+            "status": "BANNED" if note_upper.startswith("OPENAI_DIE") else "PLUS",
+            "note": note,
+            "subject": note,
+            "updated_at": str(material.get("updated_at") or material.get("created_at") or now),
+        }
+        migrated_count += 1
+
     for raw in data.get("items") or []:
         if not isinstance(raw, dict):
             continue
@@ -111,7 +131,13 @@ def save_gpt_marks(data: Dict[str, Any]) -> Dict[str, Any]:
     payload = rows + [blank for _ in range(target_rows - len(rows))]
     ws.update(f"A1:F{target_rows}", payload, value_input_option="RAW")
     cleaned_materials = cleanup_gpt_marks_from_materials()
-    return {"ok": True, "saved": len(rows) - 1, "items": rows_to_gpt_marks(rows[1:]), "cleaned_materials": cleaned_materials}
+    return {
+        "ok": True,
+        "saved": len(rows) - 1,
+        "items": rows_to_gpt_marks(rows[1:]),
+        "migrated_materials": migrated_count,
+        "cleaned_materials": cleaned_materials,
+    }
 
 
 def rows_to_gpt_marks(rows: List[List[str]]) -> List[Dict[str, str]]:
