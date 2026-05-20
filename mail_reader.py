@@ -10,6 +10,7 @@ import requests
 
 GRAPH_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 GRAPH_MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
+GRAPH_ALL_MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/messages"
 
 DEFAULT_GRAPH_SCOPE = "https://graph.microsoft.com/Mail.Read offline_access"
 DISPLAY_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -126,6 +127,15 @@ def check_gpt_plus_mail(raw_account: str, limit: int = 30, active_days: int = 45
         "$select": "subject,from,receivedDateTime,bodyPreview,body",
     }
     headers = {"Authorization": f"Bearer {token}"}
+
+    banned_hit = _find_banned_message(headers, max_messages=50)
+    if banned_hit:
+        return {
+            "email": account["email"],
+            "status": "BANNED",
+            "label": "Acc die / bi ban",
+            "matched": banned_hit,
+        }
 
     try:
         resp = requests.get(GRAPH_MESSAGES_URL, headers=headers, params=params, timeout=25)
@@ -308,6 +318,34 @@ def _openai_banned_score(message: Dict[str, str]) -> int:
         if pattern in text:
             score += 2
     return score if score >= 6 else 0
+
+
+def _find_banned_message(headers: Dict[str, str], max_messages: int = 50) -> Optional[Dict[str, Any]]:
+    params = {
+        "$top": max(1, min(int(max_messages or 50), 50)),
+        "$orderby": "receivedDateTime desc",
+        "$select": "subject,from,receivedDateTime,bodyPreview,body",
+    }
+    try:
+        resp = requests.get(GRAPH_ALL_MESSAGES_URL, headers=headers, params=params, timeout=25)
+    except requests.RequestException:
+        return None
+    if resp.status_code >= 400:
+        return None
+
+    for raw_msg in resp.json().get("value", []):
+        normalized = _normalize_message(raw_msg)
+        score = _openai_banned_score(normalized)
+        if score <= 0:
+            continue
+        return {
+            "from": normalized.get("from", ""),
+            "subject": normalized.get("subject", ""),
+            "time": normalized.get("time", ""),
+            "score": score,
+            "preview": normalized.get("preview", "")[:240],
+        }
+    return None
 
 
 def _parse_graph_time(value: str) -> Optional[datetime]:
