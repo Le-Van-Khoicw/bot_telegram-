@@ -1102,6 +1102,23 @@ def stock_update_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def welcome_inline_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🛍 Sản phẩm", callback_data="go_products"),
+            InlineKeyboardButton("📦 Đơn hàng", callback_data="go_orders"),
+        ],
+        [
+            InlineKeyboardButton("✨ Cập nhật kho", callback_data="refresh_stock"),
+            InlineKeyboardButton("💬 Hỗ trợ", callback_data="go_support"),
+        ],
+        [
+            InlineKeyboardButton("🔐 2FA", callback_data="2fa_help"),
+            InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help"),
+        ],
+    ])
+
+
 async def stock_update_text() -> str:
     products = await gs_call(load_products_cached)
     stock_ready = await gs_call(stock_count_ready_by_code_cached)
@@ -1274,7 +1291,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         welcome_text(user.full_name),
         parse_mode="Markdown",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=welcome_inline_kb(),
     )
 
 async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2788,7 +2805,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=q.from_user.id,
             text=welcome_text(q.from_user.full_name),
             parse_mode="Markdown",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=welcome_inline_kb(),
         )
         return
 
