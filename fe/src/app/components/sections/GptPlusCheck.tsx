@@ -22,6 +22,9 @@ type CheckResult = {
   } | null;
 };
 
+type MaterialStatus = "NEW" | "OK" | "BAD";
+type MaterialItem = { id: string; value: string; status: MaterialStatus; note?: string };
+
 interface Props {
   adminKey: string;
 }
@@ -42,6 +45,30 @@ function loadResults(): CheckResult[] {
 
 function emailFromLine(line: string) {
   return line.split("|", 1)[0].split("----", 1)[0].trim().toLowerCase();
+}
+
+function makeId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function materialKey(value: string) {
+  const rawValue = String(value || "").trim();
+  const firstPart = rawValue.split("|")[0]?.split("----")[0]?.trim() || rawValue;
+  return firstPart.toLowerCase();
+}
+
+function normalizeMaterials(rows: any[]): MaterialItem[] {
+  return (rows || [])
+    .map((row) => {
+      const status = String(row.status || "NEW").toUpperCase();
+      return {
+        id: String(row.id || makeId()),
+        value: String(row.value || "").trim(),
+        status: (status === "OK" || status === "BAD" ? status : "NEW") as MaterialStatus,
+        note: row.note ? String(row.note) : undefined,
+      };
+    })
+    .filter((item) => item.value);
 }
 
 export function GptPlusCheck({ adminKey }: Props) {
@@ -108,6 +135,40 @@ export function GptPlusCheck({ adminKey }: Props) {
   const copyOne = async (row: CheckResult) => {
     await navigator.clipboard.writeText(lineFor(row));
     toast.success("Đã copy 1 dòng");
+  };
+
+  const markCheckedInMaterials = async () => {
+    const markedRows = results.filter((row) => row.status === "PLUS" || row.status === "BANNED");
+    if (!markedRows.length) return toast.info("Chưa có Plus/Die để đánh dấu");
+
+    const response = await adminApi<{ items?: any[] }>("/admin/api/materials", adminKey);
+    const materials = normalizeMaterials(response.items || []);
+    const byKey = new Map(materials.map((item) => [materialKey(item.value), item]));
+    let plusCount = 0;
+    let dieCount = 0;
+
+    for (const row of markedRows) {
+      const value = lineFor(row);
+      const key = materialKey(value || row.email);
+      const nextStatus: MaterialStatus = row.status === "PLUS" ? "OK" : "BAD";
+      const reason = row.status === "PLUS"
+        ? "GPT_PLUS"
+        : `OPENAI_DIE: ${row.matched?.subject || row.matched?.preview || row.label}`;
+      const current = byKey.get(key);
+      const updated = current
+        ? { ...current, value: current.value || value, status: nextStatus, note: reason }
+        : { id: makeId(), value, status: nextStatus, note: reason };
+      byKey.set(key, updated);
+      if (row.status === "PLUS") plusCount += 1;
+      if (row.status === "BANNED") dieCount += 1;
+    }
+
+    const nextItems = Array.from(byKey.values());
+    await adminApi("/admin/api/materials", adminKey, {
+      method: "POST",
+      body: JSON.stringify({ items: nextItems, deleted_ids: [], force_clear: false }),
+    });
+    toast.success(`Đã đánh dấu kho: OK ${plusCount}, Lỗi ${dieCount}`);
   };
 
   const clearAll = () => {
@@ -197,6 +258,13 @@ export function GptPlusCheck({ adminKey }: Props) {
               disabled={bannedResults.length === 0}
             >
               <Copy size={15} /> Copy note die
+            </Button>
+            <Button
+              variant="outline"
+              onClick={markCheckedInMaterials}
+              disabled={plusResults.length === 0 && bannedResults.length === 0}
+            >
+              Đánh dấu kho
             </Button>
             <Button variant="ghost" onClick={clearAll}>Xóa</Button>
           </div>
