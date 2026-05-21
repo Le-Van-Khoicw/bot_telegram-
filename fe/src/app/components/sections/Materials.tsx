@@ -218,6 +218,40 @@ export function Materials({ data, adminKey, refresh }: Props) {
     toast.success(`Đã nhập ${next.length - items.length} dòng nguyên liệu`);
   };
 
+  const importFreshBatch = async () => {
+    const lines = raw.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    if (!lines.length) return;
+    const seen = new Set<string>();
+    const fresh = lines
+      .filter((line) => {
+        if (seen.has(line)) return false;
+        seen.add(line);
+        return true;
+      })
+      .map((line) => ({ id: makeId(), value: line, status: "NEW" as const }));
+
+    setRaw("");
+    setItems(fresh);
+    saveItems(fresh);
+    pendingSaveRef.current = fresh;
+    pendingOptionsRef.current = { upsertItems: fresh };
+    setBusy(true);
+    try {
+      if (autosaveTimerRef.current) {
+        window.clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      await saveRemote([], {
+        deletedIds: items.map((item) => item.id),
+        forceClear: true,
+      });
+      await saveRemote(fresh, { upsertItems: fresh });
+      toast.success(`Đã tạo lô mới ${fresh.length} dòng chưa phân loại`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const updateStatus = (id: string, status: MaterialStatus) => {
     const changed = items.find((item) => item.id === id);
     if (!changed) return;
@@ -445,6 +479,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
             onChange={(e) => setRaw(e.target.value)}
           />
           <div className="flex flex-wrap gap-2">
+            <Button onClick={importFreshBatch} disabled={busy || !raw.trim()}>Tạo lô mới</Button>
             <Button onClick={importRaw} disabled={!raw.trim()}>Thêm vào danh sách</Button>
             <Button variant="outline" className="gap-2" onClick={() => copyItems("OK")}><Copy size={15} /> Copy OK</Button>
             <Button variant="outline" className="gap-2" onClick={() => copyItems("BAD")}><Copy size={15} /> Copy lỗi</Button>
