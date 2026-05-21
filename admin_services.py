@@ -342,23 +342,45 @@ def _save_materials_firestore(data: Dict[str, Any]) -> Dict[str, Any]:
     current = _load_materials_firestore()
     by_value = {item.get("value", ""): item for item in current if item.get("value")}
     by_id = {item.get("id", ""): item for item in current if item.get("id")}
-
-    if bool(data.get("force_clear")):
-        for item in current:
-            if item.get("id"):
-                col.document(item["id"]).delete()
-        return {"ok": True, "firebase": True, "saved": 0, "items": []}
-
-    for raw_id in data.get("deleted_ids") or []:
-        item_id = str(raw_id or "").strip()
-        if item_id:
-            col.document(item_id).delete()
-
     raw_items = data.get("items") or []
     if not isinstance(raw_items, list):
         raise ValueError("items must be a list")
 
+    def delete_ids(item_ids: List[str]) -> None:
+        ids = []
+        seen = set()
+        for raw_id in item_ids:
+            item_id = str(raw_id or "").strip()
+            if item_id and item_id not in seen:
+                seen.add(item_id)
+                ids.append(item_id)
+        if not ids:
+            return
+        batch = db.batch()
+        count = 0
+        for item_id in ids:
+            batch.delete(col.document(item_id))
+            count += 1
+            if count >= 450:
+                batch.commit()
+                batch = db.batch()
+                count = 0
+        if count:
+            batch.commit()
+
+    deleted_ids: List[str] = []
+    if bool(data.get("force_clear")):
+        deleted_ids.extend(str(item.get("id") or "").strip() for item in current if item.get("id"))
+
+    for raw_id in data.get("deleted_ids") or []:
+        item_id = str(raw_id or "").strip()
+        if item_id:
+            deleted_ids.append(item_id)
+
+    delete_ids(deleted_ids)
+
     seen_values = set()
+    saved_items: List[Dict[str, str]] = []
     for raw in raw_items:
         if not isinstance(raw, dict):
             continue
@@ -373,6 +395,11 @@ def _save_materials_firestore(data: Dict[str, Any]) -> Dict[str, Any]:
             material["created_at"] = existing.get("created_at") or material["created_at"]
 
         col.document(material["id"]).set(material, merge=True)
+        saved_items.append(material)
+
+    if bool(data.get("prefer_local")) or deleted_ids or bool(data.get("force_clear")):
+        saved_items.sort(key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True)
+        return {"ok": True, "firebase": True, "saved": len(saved_items), "items": saved_items}
 
     items = _load_materials_firestore()
     return {"ok": True, "firebase": True, "saved": len(items), "items": items}

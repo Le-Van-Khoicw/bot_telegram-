@@ -79,7 +79,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
   const retryTimerRef = useRef<number | null>(null);
   const autosaveTimerRef = useRef<number | null>(null);
   const pendingSaveRef = useRef<MaterialItem[] | null>(null);
-  const pendingOptionsRef = useRef<{ upsertItems?: MaterialItem[]; deletedIds?: string[]; forceClear?: boolean } | null>(null);
+  const pendingOptionsRef = useRef<{ upsertItems?: MaterialItem[]; deletedIds?: string[]; forceClear?: boolean; preferLocal?: boolean } | null>(null);
   const warnedSaveErrorRef = useRef(false);
   const syncStateRef = useRef(syncState);
 
@@ -106,7 +106,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
 
   const saveRemote = useCallback(async (
     next: MaterialItem[],
-    options: { upsertItems?: MaterialItem[]; deletedIds?: string[]; forceClear?: boolean } = {},
+    options: { upsertItems?: MaterialItem[]; deletedIds?: string[]; forceClear?: boolean; preferLocal?: boolean } = {},
   ): Promise<boolean> => {
     try {
       setSyncState("saving");
@@ -116,10 +116,14 @@ export function Materials({ data, adminKey, refresh }: Props) {
           items: next,
           deleted_ids: options.deletedIds || [],
           force_clear: Boolean(options.forceClear),
+          prefer_local: Boolean(options.preferLocal),
         }),
       });
-      if (result.items) {
+      if (result.items && !options.preferLocal) {
         applyRemoteItems(result.items, Boolean(options.forceClear) || next.length === 0);
+      } else {
+        setItems(next);
+        saveItems(next);
       }
       pendingSaveRef.current = null;
       pendingOptionsRef.current = null;
@@ -186,7 +190,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
 
   const setAndSave = (
     next: MaterialItem[],
-    options: { upsertItems?: MaterialItem[]; deletedIds?: string[]; forceClear?: boolean } = {},
+    options: { upsertItems?: MaterialItem[]; deletedIds?: string[]; forceClear?: boolean; preferLocal?: boolean } = {},
   ) => {
     setItems(next);
     saveItems(next);
@@ -244,8 +248,9 @@ export function Materials({ data, adminKey, refresh }: Props) {
       await saveRemote([], {
         deletedIds: items.map((item) => item.id),
         forceClear: true,
+        preferLocal: true,
       });
-      await saveRemote(fresh, { upsertItems: fresh });
+      await saveRemote(fresh, { upsertItems: fresh, preferLocal: true });
       toast.success(`Đã tạo lô mới ${fresh.length} dòng chưa phân loại`);
     } finally {
       setBusy(false);
@@ -263,7 +268,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
     const target = items.find((item) => item.id === id);
     if (!target) return;
     const next = items.filter((item) => item.id !== id);
-    const options = { upsertItems: next, deletedIds: [id], forceClear: next.length === 0 };
+    const options = { upsertItems: next, deletedIds: [id], forceClear: next.length === 0, preferLocal: true };
     setItems(next);
     saveItems(next);
     pendingSaveRef.current = next;
@@ -293,7 +298,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
       window.clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = null;
     }
-    const options = { upsertItems: next, deletedIds, forceClear: !status || next.length === 0 };
+    const options = { upsertItems: next, deletedIds, forceClear: !status || next.length === 0, preferLocal: true };
     setItems(next);
     saveItems(next);
     pendingSaveRef.current = next;
@@ -347,6 +352,7 @@ export function Materials({ data, adminKey, refresh }: Props) {
       await saveRemote(next, {
         upsertItems: duplicateOkItems,
         deletedIds: cleanOkItems.map((item) => item.id),
+        preferLocal: true,
       });
       return next;
     };
