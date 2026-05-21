@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { Badge } from "../ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
-import { CheckCircle, Clock, DollarSign, Package, ShoppingCart, Users, Warehouse, XCircle } from "lucide-react";
+import { CheckCircle, Clock, Eye, EyeOff, Package, ShoppingCart, Users, Warehouse, XCircle } from "lucide-react";
 import { money, text, type AdminSnapshot } from "../../api";
 
 interface OverviewProps {
@@ -12,6 +13,8 @@ interface OverviewProps {
 }
 
 export function Overview({ data, onOpenOrders, onOpenInventory, onOpenUsers }: OverviewProps) {
+  const [showRevenue, setShowRevenue] = useState(false);
+
   if (!data) return <EmptyState />;
 
   const s = data.summary;
@@ -19,7 +22,7 @@ export function Overview({ data, onOpenOrders, onOpenInventory, onOpenUsers }: O
 
   const cards = [
     { title: "Tổng đơn", value: s.orders, icon: <ShoppingCart size={20} />, color: "text-blue-600", bg: "bg-blue-50", onClick: () => onOpenOrders?.() },
-    { title: "Tổng doanh thu", value: money(s.revenue), icon: <DollarSign size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", onClick: () => onOpenOrders?.({ status: "DELIVERED" }) },
+    { title: "Tổng doanh thu", value: showRevenue ? money(s.revenue) : "••••••", hint: showRevenue ? "Chạm để ẩn" : "Chạm để hiện", icon: showRevenue ? <EyeOff size={20} /> : <Eye size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", onClick: () => setShowRevenue((value) => !value) },
     { title: "PENDING", value: c.PENDING || 0, icon: <Clock size={20} />, color: "text-amber-600", bg: "bg-amber-50", onClick: () => onOpenOrders?.({ status: "PENDING" }) },
     { title: "DELIVERED", value: c.DELIVERED || 0, icon: <CheckCircle size={20} />, color: "text-green-600", bg: "bg-green-50", onClick: () => onOpenOrders?.({ status: "DELIVERED" }) },
     { title: "Lỗi / hủy", value: (c.EXPIRED || 0) + (c.CANCELLED || 0), icon: <XCircle size={20} />, color: "text-red-600", bg: "bg-red-50", onClick: () => onOpenOrders?.({ status: "FAILED" }) },
@@ -42,6 +45,7 @@ export function Overview({ data, onOpenOrders, onOpenInventory, onOpenUsers }: O
             </CardHeader>
             <CardContent className="px-4 pb-4">
               <p className={`text-lg ${card.color} truncate`}>{card.value}</p>
+              {"hint" in card && card.hint ? <p className="mt-1 text-[11px] text-muted-foreground">{card.hint}</p> : null}
             </CardContent>
           </Card>
         ))}
