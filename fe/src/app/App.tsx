@@ -25,7 +25,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [newCount, setNewCount] = useState(0);
   const [inventoryPreset, setInventoryPreset] = useState<{ status?: string; stockCode?: string; nonce: number }>({ nonce: 0 });
-  const [orderPreset, setOrderPreset] = useState<{ status?: string; dateKey?: string; dateField?: "created_at" | "delivered_at"; nonce: number }>({ nonce: 0 });
+  const [orderPreset, setOrderPreset] = useState<{ status?: string; dateKey?: string; dateField?: "created_at" | "delivered_at"; view?: "revenue"; nonce: number }>({ nonce: 0 });
 
   // ✅ NEW: Notification management
   const [notifications, setNotifications] = useState<Notification[]>(() => {

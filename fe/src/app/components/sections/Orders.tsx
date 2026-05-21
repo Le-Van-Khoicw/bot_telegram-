@@ -12,12 +12,14 @@ import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../ap
 type OrderStatus = "PENDING" | "PAID" | "DELIVERED" | "EXPIRED" | "CANCELLED";
 type OrderFilter = OrderStatus | "ALL" | "FAILED";
 type GptMark = { value: string; status?: string; note?: string };
+type OrderView = "orders" | "revenue";
+type RevenuePeriod = "day" | "week" | "month" | "year";
 
 interface Props {
   data: AdminSnapshot | null;
   adminKey: string;
   refresh: () => Promise<void>;
-  preset?: { status?: string; dateKey?: string; dateField?: "created_at" | "delivered_at"; nonce: number };
+  preset?: { status?: string; dateKey?: string; dateField?: "created_at" | "delivered_at"; view?: "revenue"; nonce: number };
   onBack?: () => void;
 }
 
@@ -42,11 +44,51 @@ function vnDay(offsetDays = 0) {
   return base.toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
 }
 
+function parseVnDateKey(key: string) {
+  if (!key) return null;
+  const date = new Date(`${key}T00:00:00+07:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function periodRange(period: RevenuePeriod) {
+  const todayKey = vnDay(0);
+  const start = parseVnDateKey(todayKey) || new Date();
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+
+  if (period === "week") {
+    start.setDate(start.getDate() - 6);
+  } else if (period === "month") {
+    start.setDate(1);
+  } else if (period === "year") {
+    start.setMonth(0, 1);
+  }
+
+  return { start, end };
+}
+
+function isInPeriod(value: any, period: RevenuePeriod) {
+  const key = dateKey(value);
+  const date = parseVnDateKey(key);
+  if (!date) return false;
+  const { start, end } = periodRange(period);
+  return date >= start && date < end;
+}
+
+function periodLabel(period: RevenuePeriod) {
+  if (period === "day") return "hôm nay";
+  if (period === "week") return "7 ngày gần nhất";
+  if (period === "month") return "tháng này";
+  return "năm nay";
+}
+
 export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<OrderFilter>("ALL");
   const [filterDateKey, setFilterDateKey] = useState("");
   const [filterDateField, setFilterDateField] = useState<"created_at" | "delivered_at">("created_at");
+  const [view, setView] = useState<OrderView>("orders");
+  const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>("day");
   const [changeModal, setChangeModal] = useState<{ open: boolean; order: AnyRow | null }>({ open: false, order: null });
   const [newStatus, setNewStatus] = useState<OrderStatus>("DELIVERED");
   const [busy, setBusy] = useState(false);
@@ -77,10 +119,14 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
   useEffect(() => {
     if (!preset?.nonce) return;
     const status = (preset.status || "ALL").toUpperCase() as OrderFilter;
+    setView(preset.view === "revenue" ? "revenue" : "orders");
+    if (preset.view === "revenue") {
+      setRevenuePeriod("day");
+    }
     setFilterStatus(status === "FAILED" || ALL_STATUSES.includes(status as OrderStatus) ? status : "ALL");
     setFilterDateKey(preset.dateKey || "");
     setFilterDateField(preset.dateField || "created_at");
-  }, [preset?.dateField, preset?.dateKey, preset?.nonce, preset?.status]);
+  }, [preset?.dateField, preset?.dateKey, preset?.nonce, preset?.status, preset?.view]);
 
   const usersById = useMemo(() => {
     const map = new Map<string, AnyRow>();
@@ -126,10 +172,18 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
     .filter((order) => text(order.status).toUpperCase() === "DELIVERED")
     .filter((order) => dateKey(order.delivered_at || order.paid_at || order.created_at) === todayKey)
     .reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const revenueOrders = orders.filter((order) => {
+    if (text(order.status).toUpperCase() !== "DELIVERED") return false;
+    return isInPeriod(order.delivered_at || order.paid_at || order.created_at, revenuePeriod);
+  });
+  const selectedRevenue = revenueOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
 
   const visible = orders.filter((order) => {
     const status = text(order.status).toUpperCase();
-    if (filterStatus === "FAILED" && !["EXPIRED", "CANCELLED"].includes(status)) return false;
+    if (view === "revenue") {
+      if (status !== "DELIVERED") return false;
+      if (!isInPeriod(order.delivered_at || order.paid_at || order.created_at, revenuePeriod)) return false;
+    } else if (filterStatus === "FAILED" && !["EXPIRED", "CANCELLED"].includes(status)) return false;
     if (filterStatus !== "ALL" && filterStatus !== "FAILED" && status !== filterStatus) return false;
     if (filterDateKey) {
       const dateValue = filterDateField === "delivered_at"
@@ -171,7 +225,10 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2"><ClipboardList size={20} /> Đơn hàng</h2>
+        <h2 className="flex items-center gap-2">
+          {view === "revenue" ? <DollarSign size={20} /> : <ClipboardList size={20} />}
+          {view === "revenue" ? "Doanh thu" : "Đơn hàng"}
+        </h2>
         {onBack && (
           <Button variant="outline" size="sm" className="gap-2" onClick={onBack}>
             <ArrowLeft size={15} /> Quay lại
@@ -183,8 +240,9 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
         <Card className="shadow-sm">
           <CardContent className="flex items-center justify-between p-4">
             <div>
-              <p className="text-xs text-muted-foreground">Doanh thu hôm nay</p>
-              <p className="mt-2 text-lg font-semibold text-emerald-700">{money(todayRevenue)}</p>
+              <p className="text-xs text-muted-foreground">{view === "revenue" ? `Doanh thu ${periodLabel(revenuePeriod)}` : "Doanh thu hôm nay"}</p>
+              <p className="mt-2 text-lg font-semibold text-emerald-700">{money(view === "revenue" ? selectedRevenue : todayRevenue)}</p>
+              {view === "revenue" ? <p className="text-xs text-muted-foreground">{revenueOrders.length} đơn đã giao</p> : null}
             </div>
             <div className="rounded-md bg-emerald-50 p-2 text-emerald-600"><DollarSign size={20} /></div>
           </CardContent>
@@ -200,32 +258,69 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
         </Card>
       </div>
 
+      {view === "revenue" && (
+        <div className="flex flex-wrap gap-2">
+          {([
+            ["day", "Ngày"],
+            ["week", "Tuần"],
+            ["month", "Tháng"],
+            ["year", "Năm"],
+          ] as [RevenuePeriod, string][]).map(([period, label]) => (
+            <Button
+              key={period}
+              variant={revenuePeriod === period ? "default" : "outline"}
+              size="sm"
+              className="h-10"
+              onClick={() => setRevenuePeriod(period)}
+            >
+              {label}
+            </Button>
+          ))}
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-10"
+            onClick={() => {
+              setView("orders");
+              setFilterStatus("ALL");
+              setFilterDateKey("");
+            }}
+          >
+            Xem tất cả đơn
+          </Button>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2">
         <div className="relative">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-8 w-64" placeholder="Order ID / User / Code" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <Select value={filterStatus} onValueChange={(value) => setFilterStatus(value as OrderFilter)}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">Tất cả</SelectItem>
-            <SelectItem value="FAILED">Lỗi / hủy</SelectItem>
-            {ALL_STATUSES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Button
-          variant={filterDateKey === todayKey && filterDateField === "created_at" ? "default" : "outline"}
-          size="sm"
-          className="h-10"
-          onClick={() => applyDayFilter(todayKey)}
-        >
-          Hôm nay: {todayOrderCount}
-        </Button>
-        {filterDateKey && (
-          <Button variant="secondary" size="sm" className="h-10 gap-2" onClick={() => setFilterDateKey("")}>
-            {filterDateField === "delivered_at" ? "Giao ngày" : "Tạo ngày"} {filterDateKey}
-            <span className="text-muted-foreground">×</span>
-          </Button>
+        {view !== "revenue" && (
+          <>
+            <Select value={filterStatus} onValueChange={(value) => setFilterStatus(value as OrderFilter)}>
+              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Tất cả</SelectItem>
+                <SelectItem value="FAILED">Lỗi / hủy</SelectItem>
+                {ALL_STATUSES.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button
+              variant={filterDateKey === todayKey && filterDateField === "created_at" ? "default" : "outline"}
+              size="sm"
+              className="h-10"
+              onClick={() => applyDayFilter(todayKey)}
+            >
+              Hôm nay: {todayOrderCount}
+            </Button>
+            {filterDateKey && (
+              <Button variant="secondary" size="sm" className="h-10 gap-2" onClick={() => setFilterDateKey("")}>
+                {filterDateField === "delivered_at" ? "Giao ngày" : "Tạo ngày"} {filterDateKey}
+                <span className="text-muted-foreground">×</span>
+              </Button>
+            )}
+          </>
         )}
       </div>
 

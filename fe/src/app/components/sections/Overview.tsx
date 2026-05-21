@@ -7,7 +7,7 @@ import { money, text, type AdminSnapshot } from "../../api";
 
 interface OverviewProps {
   data: AdminSnapshot | null;
-  onOpenOrders?: (preset?: { status?: string; dateKey?: string; dateField?: "created_at" | "delivered_at" }) => void;
+  onOpenOrders?: (preset?: { status?: string; dateKey?: string; dateField?: "created_at" | "delivered_at"; view?: "revenue" }) => void;
   onOpenInventory?: (status?: string, stockCode?: string) => void;
   onOpenUsers?: () => void;
 }
@@ -22,7 +22,7 @@ export function Overview({ data, onOpenOrders, onOpenInventory, onOpenUsers }: O
 
   const cards = [
     { title: "Tổng đơn", value: s.orders, icon: <ShoppingCart size={20} />, color: "text-blue-600", bg: "bg-blue-50", onClick: () => onOpenOrders?.() },
-    { title: "Tổng doanh thu", value: showRevenue ? money(s.revenue) : "••••••", hint: showRevenue ? "Chạm để ẩn" : "Chạm để hiện", icon: showRevenue ? <EyeOff size={20} /> : <Eye size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", onClick: () => setShowRevenue((value) => !value) },
+    { title: "Tổng doanh thu", value: showRevenue ? money(s.revenue) : "••••••", hint: "Chạm card để xem theo ngày / tuần / tháng / năm", icon: showRevenue ? <EyeOff size={20} /> : <Eye size={20} />, color: "text-emerald-600", bg: "bg-emerald-50", revenue: true, onClick: () => onOpenOrders?.({ status: "DELIVERED", dateField: "delivered_at", view: "revenue" }) },
     { title: "PENDING", value: c.PENDING || 0, icon: <Clock size={20} />, color: "text-amber-600", bg: "bg-amber-50", onClick: () => onOpenOrders?.({ status: "PENDING" }) },
     { title: "DELIVERED", value: c.DELIVERED || 0, icon: <CheckCircle size={20} />, color: "text-green-600", bg: "bg-green-50", onClick: () => onOpenOrders?.({ status: "DELIVERED" }) },
     { title: "Lỗi / hủy", value: (c.EXPIRED || 0) + (c.CANCELLED || 0), icon: <XCircle size={20} />, color: "text-red-600", bg: "bg-red-50", onClick: () => onOpenOrders?.({ status: "FAILED" }) },
@@ -40,7 +40,17 @@ export function Overview({ data, onOpenOrders, onOpenInventory, onOpenUsers }: O
             <CardHeader className="pb-1 pt-4 px-4">
               <div className="flex items-center justify-between gap-2">
                 <CardTitle className="text-xs text-muted-foreground">{card.title}</CardTitle>
-                <div className={`${card.bg} ${card.color} p-1.5 rounded-md`}>{card.icon}</div>
+                <button
+                  type="button"
+                  className={`${card.bg} ${card.color} p-1.5 rounded-md`}
+                  onClick={(event) => {
+                    if (!("revenue" in card)) return;
+                    event.stopPropagation();
+                    setShowRevenue((value) => !value);
+                  }}
+                >
+                  {card.icon}
+                </button>
               </div>
             </CardHeader>
             <CardContent className="px-4 pb-4">
