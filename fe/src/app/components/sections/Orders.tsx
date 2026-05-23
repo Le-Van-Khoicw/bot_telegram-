@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ClipboardList, DollarSign, Search, ShoppingCart } from "lucide-react";
+import { ArrowLeft, ClipboardList, DollarSign, Plus, Search, ShoppingCart, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../api";
@@ -89,6 +91,7 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
   const [filterDateField, setFilterDateField] = useState<"created_at" | "delivered_at">("created_at");
   const [view, setView] = useState<OrderView>("orders");
   const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>("day");
+  const [expenseForm, setExpenseForm] = useState({ name: "", amount: "", date: vnDay(0), note: "" });
   const [changeModal, setChangeModal] = useState<{ open: boolean; order: AnyRow | null }>({ open: false, order: null });
   const [newStatus, setNewStatus] = useState<OrderStatus>("DELIVERED");
   const [busy, setBusy] = useState(false);
@@ -177,6 +180,9 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
     return isInPeriod(order.delivered_at || order.paid_at || order.created_at, revenuePeriod);
   });
   const selectedRevenue = revenueOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const periodExpenses = (data?.expenses || []).filter((expense) => isInPeriod(expense.date || expense.created_at, revenuePeriod));
+  const selectedExpense = periodExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const selectedProfit = selectedRevenue - selectedExpense;
 
   const visible = orders.filter((order) => {
     const status = text(order.status).toUpperCase();
@@ -222,6 +228,36 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
     setFilterDateField("created_at");
   };
 
+  const addExpense = async () => {
+    const amount = Number(String(expenseForm.amount).replace(/[^\d]/g, ""));
+    if (!expenseForm.name.trim()) return toast.warning("Nhập tên khoản chi trước nha");
+    if (!amount) return toast.warning("Nhập số tiền lớn hơn 0");
+    setBusy(true);
+    try {
+      await adminApi("/admin/api/expenses", adminKey, {
+        method: "POST",
+        body: JSON.stringify({ ...expenseForm, amount }),
+      });
+      setExpenseForm({ name: "", amount: "", date: vnDay(0), note: "" });
+      await refresh();
+      toast.success("Đã thêm chi phí");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeExpense = async (expenseId: string) => {
+    if (!expenseId) return;
+    setBusy(true);
+    try {
+      await adminApi(`/admin/api/expenses/${encodeURIComponent(expenseId)}`, adminKey, { method: "DELETE" });
+      await refresh();
+      toast.success("Đã xóa chi phí");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -259,36 +295,83 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
       </div>
 
       {view === "revenue" && (
-        <div className="flex flex-wrap gap-2">
-          {([
-            ["day", "Ngày"],
-            ["week", "Tuần"],
-            ["month", "Tháng"],
-            ["year", "Năm"],
-          ] as [RevenuePeriod, string][]).map(([period, label]) => (
+        <>
+          <div className="flex flex-wrap gap-2">
+            {([
+              ["day", "Ngày"],
+              ["week", "Tuần"],
+              ["month", "Tháng"],
+              ["year", "Năm"],
+            ] as [RevenuePeriod, string][]).map(([period, label]) => (
+              <Button
+                key={period}
+                variant={revenuePeriod === period ? "default" : "outline"}
+                size="sm"
+                className="h-10"
+                onClick={() => setRevenuePeriod(period)}
+              >
+                {label}
+              </Button>
+            ))}
             <Button
-              key={period}
-              variant={revenuePeriod === period ? "default" : "outline"}
+              variant="secondary"
               size="sm"
               className="h-10"
-              onClick={() => setRevenuePeriod(period)}
+              onClick={() => {
+                setView("orders");
+                setFilterStatus("ALL");
+                setFilterDateKey("");
+              }}
             >
-              {label}
+              Xem tất cả đơn
             </Button>
-          ))}
-          <Button
-            variant="secondary"
-            size="sm"
-            className="h-10"
-            onClick={() => {
-              setView("orders");
-              setFilterStatus("ALL");
-              setFilterDateKey("");
-            }}
-          >
-            Xem tất cả đơn
-          </Button>
-        </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <Card className="shadow-sm">
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">Chi phí {periodLabel(revenuePeriod)}</p>
+                <p className="mt-2 text-lg font-semibold text-red-600">{money(selectedExpense)}</p>
+                <p className="text-xs text-muted-foreground">{periodExpenses.length} khoản chi</p>
+              </CardContent>
+            </Card>
+            <Card className="shadow-sm">
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">Lợi nhuận {periodLabel(revenuePeriod)}</p>
+                <p className={`mt-2 text-lg font-semibold ${selectedProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>{money(selectedProfit)}</p>
+                <p className="text-xs text-muted-foreground">Doanh thu - chi phí</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="shadow-sm">
+            <CardContent className="space-y-3 p-4">
+              <div className="grid gap-3 md:grid-cols-[1.3fr_0.8fr_0.8fr_1.2fr_auto]">
+                <div className="space-y-1">
+                  <Label>Tên khoản chi</Label>
+                  <Input value={expenseForm.name} onChange={(e) => setExpenseForm({ ...expenseForm, name: e.target.value })} placeholder="Mua acc, mua mail, phí tool..." />
+                </div>
+                <div className="space-y-1">
+                  <Label>Số tiền</Label>
+                  <Input value={expenseForm.amount} onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })} placeholder="500000" inputMode="numeric" />
+                </div>
+                <div className="space-y-1">
+                  <Label>Ngày</Label>
+                  <Input type="date" value={expenseForm.date} onChange={(e) => setExpenseForm({ ...expenseForm, date: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <Label>Ghi chú</Label>
+                  <Input value={expenseForm.note} onChange={(e) => setExpenseForm({ ...expenseForm, note: e.target.value })} placeholder="Lô hàng / số lượng..." />
+                </div>
+                <div className="flex items-end">
+                  <Button className="h-10 gap-1.5" onClick={addExpense} disabled={busy}>
+                    <Plus size={15} /> Thêm
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </>
       )}
 
       <div className="flex flex-wrap gap-2">
@@ -377,6 +460,44 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
           </Table>
         </CardContent>
       </Card>
+
+      {view === "revenue" && (
+        <Card className="shadow-sm">
+          <CardContent className="p-0 overflow-x-auto">
+            <Table className="min-w-[760px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Ngày</TableHead>
+                  <TableHead>Khoản chi</TableHead>
+                  <TableHead>Ghi chú</TableHead>
+                  <TableHead className="text-right">Số tiền</TableHead>
+                  <TableHead className="text-center">Xóa</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {periodExpenses.map((expense) => (
+                  <TableRow key={text(expense.id)}>
+                    <TableCell className="whitespace-nowrap">{text(expense.date)}</TableCell>
+                    <TableCell className="font-medium">{text(expense.name)}</TableCell>
+                    <TableCell className="text-muted-foreground">{text(expense.note)}</TableCell>
+                    <TableCell className="text-right text-red-600">{money(expense.amount)}</TableCell>
+                    <TableCell className="text-center">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-700" onClick={() => removeExpense(text(expense.id))} disabled={busy}>
+                        <Trash2 size={14} />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!periodExpenses.length && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">Chưa có khoản chi trong kỳ này</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
 
       <Dialog open={changeModal.open} onOpenChange={(open) => setChangeModal({ open, order: null })}>
         <DialogContent className="max-w-sm">

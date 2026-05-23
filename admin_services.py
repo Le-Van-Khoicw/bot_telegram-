@@ -12,6 +12,8 @@ import bot_shop as shop
 MATERIALS_TAB = "MATERIALS"
 MATERIALS_HEADERS = ["id", "value", "status", "note", "created_at", "updated_at"]
 MATERIALS_COLLECTION = os.getenv("FIREBASE_MATERIALS_COLLECTION", "materials").strip() or "materials"
+EXPENSES_TAB = "EXPENSES"
+EXPENSES_HEADERS = ["id", "name", "amount", "date", "note", "created_at", "updated_at"]
 GPT_MARKS_TAB = "GPT_MARKS"
 GPT_MARK_HEADERS = ["key", "value", "status", "note", "subject", "updated_at"]
 logger = logging.getLogger("admin_services")
@@ -499,6 +501,89 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "saved": len(rows) - 1, "items": items}
 
 
+def _expenses_ws():
+    shop.init_sheets()
+    try:
+        ws = shop._gs_sheet.worksheet(EXPENSES_TAB)
+    except Exception:
+        try:
+            ws = shop._gs_sheet.add_worksheet(title=EXPENSES_TAB, rows=1000, cols=len(EXPENSES_HEADERS))
+        except Exception as exc:
+            if "already exists" not in str(exc).lower():
+                raise
+            ws = shop._gs_sheet.worksheet(EXPENSES_TAB)
+        ws.update("A1:G1", [EXPENSES_HEADERS], value_input_option="USER_ENTERED")
+        return ws
+
+    try:
+        headers = [str(h).strip().lower() for h in ws.row_values(1)]
+    except Exception:
+        headers = []
+    if not any(headers):
+        ws.update("A1:G1", [EXPENSES_HEADERS], value_input_option="USER_ENTERED")
+    return ws
+
+
+def load_expenses() -> List[Dict[str, str]]:
+    rows = _records(_expenses_ws())
+    rows.sort(key=lambda x: x.get("date") or x.get("created_at") or "", reverse=True)
+    return rows
+
+
+def save_expense(data: Dict[str, Any]) -> Dict[str, Any]:
+    ws = _expenses_ws()
+    headers = _headers(ws)
+    if not headers:
+        raise RuntimeError("EXPENSES thieu header")
+
+    name = str(data.get("name") or "").strip()
+    amount = shop.normalize_int(data.get("amount"), 0)
+    date = str(data.get("date") or shop.now_dt().strftime("%Y-%m-%d")).strip()
+    note = str(data.get("note") or "").strip()
+    if not name:
+        raise ValueError("Thiếu tên khoản chi")
+    if amount <= 0:
+        raise ValueError("Số tiền phải lớn hơn 0")
+
+    rows = _records(ws)
+    expense_id = str(data.get("id") or "").strip() or f"EXP{shop.now_dt().strftime('%Y%m%d%H%M%S')}{random.randint(100, 999)}"
+    now = shop.now_str()
+    row_data = {
+        "id": expense_id,
+        "name": name,
+        "amount": amount,
+        "date": date,
+        "note": note,
+        "created_at": str(data.get("created_at") or now),
+        "updated_at": now,
+    }
+
+    row_index = None
+    for idx, row in enumerate(rows, start=2):
+        if str(row.get("id") or "").strip() == expense_id:
+            row_index = idx
+            break
+    values = _row_from_headers(headers, row_data)
+    if row_index:
+        ws.update(f"A{row_index}:G{row_index}", [values], value_input_option="USER_ENTERED")
+    else:
+        ws.append_row(values, value_input_option="USER_ENTERED")
+    return {"ok": True, "expense": row_data, "items": load_expenses()}
+
+
+def delete_expense(expense_id: str) -> Dict[str, Any]:
+    ws = _expenses_ws()
+    rows = _records(ws)
+    target = str(expense_id or "").strip()
+    if not target:
+        raise ValueError("Thiếu id khoản chi")
+    for idx, row in enumerate(rows, start=2):
+        if str(row.get("id") or "").strip() == target:
+            ws.delete_rows(idx)
+            return {"ok": True, "deleted": target, "items": load_expenses()}
+    return {"ok": False, "deleted": "", "items": rows, "error": "Không tìm thấy khoản chi"}
+
+
 def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool = False) -> Dict[str, Any]:
     shop.init_sheets()
     products = shop.load_products()
@@ -507,6 +592,11 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
     users = _records(shop._ws_users)
     reservations = _records(shop._ws_res)
     fulfillments = _records(shop._ws_ful)
+    expenses = []
+    try:
+        expenses = load_expenses()
+    except Exception as exc:
+        logger.warning("load EXPENSES failed during snapshot: %s", exc)
     materials = []
     if include_materials:
         try:
@@ -612,6 +702,7 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
         "reservations": reservations[:limit],
         "fulfillments": fulfillments[:limit],
         "deliveries": delivery_rows[:limit],
+        "expenses": expenses[:limit],
     }
     if include_materials:
         result["materials"] = materials[:pool_limit]

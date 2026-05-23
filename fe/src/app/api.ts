@@ -20,6 +20,7 @@ export interface AdminSnapshot {
   fulfillments: AnyRow[];
   deliveries?: AnyRow[];
   materials?: AnyRow[];
+  expenses?: AnyRow[];
 }
 
 export async function adminApi<T>(path: string, key: string, options: RequestInit = {}): Promise<T> {
