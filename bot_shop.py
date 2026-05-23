@@ -44,6 +44,7 @@ from telegram.helpers import escape_markdown
 
 from mail_reader import MailReaderError, read_inbox_messages
 SHEETS_LOCK = asyncio.Lock()
+HANGVE_LOCK = asyncio.Lock()
 # ================== LOGGING ==================
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -2755,41 +2756,50 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ================== CALLBACK ROUTER ==================
-# ✅ Sửa lại cmd_hangve (copy đè lên hàm cũ)
+async def run_hangve_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_chat_id: int, custom_text: str) -> None:
+    if HANGVE_LOCK.locked():
+        await context.bot.send_message(chat_id=admin_chat_id, text="Đang có một lượt /hangve chạy rồi, đợi xong giúp mình nhé.")
+        return
+
+    async with HANGVE_LOCK:
+        text = custom_text
+        reply_markup = buy_suggestion_kb()
+        if not text:
+            try:
+                text = await stock_update_text()
+                reply_markup = stock_update_kb()
+            except Exception:
+                logger.exception("build stock update failed")
+                text = "✅ *HÀNG ĐÃ VỀ*\n\n🔥 Sản phẩm đã có hàng lại!\n👉 Bấm nút bên dưới để mua nhé."
+
+        user_ids = await gs_call(get_all_user_chat_ids)
+        ok = fail = 0
+        for cid in user_ids:
+            try:
+                await context.bot.send_message(
+                    chat_id=cid,
+                    text=text,
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True,
+                )
+                ok += 1
+                await asyncio.sleep(0.05)
+            except Exception as e:
+                fail += 1
+                logger.warning("send hangve fail chat_id=%s err=%s", cid, e)
+
+        await context.bot.send_message(chat_id=admin_chat_id, text=f"Đã gửi: {ok} | Lỗi: {fail}")
+
+
+# ✅ Gửi nền để Telegram không retry cùng một lệnh /hangve nhiều lần.
 async def cmd_hangve(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # chỉ admin được dùng
     if update.effective_user.id not in ADMIN_IDS:
         return
 
     text = " ".join(context.args).strip()
-    reply_markup = buy_suggestion_kb()
-    if not text:
-        try:
-            text = await stock_update_text()
-            reply_markup = stock_update_kb()
-        except Exception:
-            logger.exception("build stock update failed")
-            text = "✅ *HÀNG ĐÃ VỀ*\n\n🔥 Sản phẩm đã có hàng lại!\n👉 Bấm nút bên dưới để mua nhé."
-
-    user_ids = await gs_call(get_all_user_chat_ids)
-
-    ok = fail = 0
-    for cid in user_ids:
-        try:
-            await context.bot.send_message(
-                chat_id=cid,
-                text=text,
-                parse_mode="Markdown",
-                reply_markup=reply_markup,
-                disable_web_page_preview=True,
-            )
-            ok += 1
-            await asyncio.sleep(0.05)  # chống rate limit nhẹ
-        except Exception as e:
-            fail += 1
-            logger.warning("send hangve fail chat_id=%s err=%s", cid, e)
-
-    await update.message.reply_text(f"Đã gửi: {ok} | Lỗi: {fail}")
+    await update.message.reply_text("Đã nhận /hangve, đang gửi nền...")
+    asyncio.create_task(run_hangve_broadcast(context, update.effective_chat.id, text))
 
 
 

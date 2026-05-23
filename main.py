@@ -1,7 +1,9 @@
 import asyncio
+from collections import OrderedDict
 import logging
 import os
 import threading
+import time
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -16,6 +18,7 @@ logger = logging.getLogger("MAIN_ORCHESTRATOR")
 
 app = FastAPI()
 telegram_app = None
+PROCESSED_UPDATE_IDS = OrderedDict()
 register_admin_routes(app)
 
 
@@ -60,6 +63,18 @@ async def telegram_webhook(request: Request):
     if telegram_app is None:
         raise HTTPException(status_code=503, detail="Telegram app is not ready")
     payload = await request.json()
+    update_id = payload.get("update_id")
+    now = time.time()
+    for old_id, seen_at in list(PROCESSED_UPDATE_IDS.items()):
+        if now - seen_at > 600 or len(PROCESSED_UPDATE_IDS) > 1000:
+            PROCESSED_UPDATE_IDS.pop(old_id, None)
+        else:
+            break
+    if update_id is not None:
+        if update_id in PROCESSED_UPDATE_IDS:
+            logger.info("Skip duplicate Telegram update_id=%s", update_id)
+            return {"ok": True, "duplicate": True}
+        PROCESSED_UPDATE_IDS[update_id] = now
     update = Update.de_json(payload, telegram_app.bot)
     await telegram_app.process_update(update)
     return {"ok": True}
