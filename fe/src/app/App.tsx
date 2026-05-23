@@ -240,7 +240,7 @@ export default function App() {
           data={data}
           onOpenOrders={(preset) => {
             setOrderPreset({ ...preset, nonce: Date.now() });
-            setSection("orders");
+            setSection(preset?.view === "revenue" ? "revenue" : "orders");
           }}
           onOpenInventory={(status, stockCode) => {
             setInventoryPreset({ status, stockCode, nonce: Date.now() });
@@ -253,7 +253,14 @@ export default function App() {
       case "inventory": return <Inventory {...common} preset={inventoryPreset} />;
       case "materials": return <Materials {...common} />;
       case "gptPlus": return <GptPlusCheck adminKey={adminKey} refresh={refresh} />;
-      case "orders": return <Orders {...common} preset={orderPreset} onBack={() => setSection("overview")} />;
+      case "orders": return <Orders key="orders" {...common} preset={orderPreset} onBack={() => setSection("overview")} />;
+      case "revenue": return (
+        <Orders
+          key="revenue"
+          {...common}
+          preset={{ status: "DELIVERED", dateField: "delivered_at", view: "revenue", nonce: 1 }}
+        />
+      );
       case "users": return <Users data={data} />;
     }
   };

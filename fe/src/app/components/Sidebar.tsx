@@ -1,5 +1,5 @@
 import { type ReactNode, useState } from "react";
-import { ClipboardCheck, ClipboardList, LayoutDashboard, LogOut, MailCheck, Menu, Package, Users, Warehouse, X } from "lucide-react";
+import { ClipboardCheck, ClipboardList, DollarSign, LayoutDashboard, LogOut, MailCheck, Menu, Package, Users, Warehouse, X } from "lucide-react";
 import { Button } from "./ui/button";
 
 export type AdminSection =
@@ -9,6 +9,7 @@ export type AdminSection =
   | "materials"
   | "gptPlus"
   | "orders"
+  | "revenue"
   | "users";
 
 export const NAV_ITEMS: { id: AdminSection; label: string; icon: ReactNode }[] = [
@@ -18,6 +19,7 @@ export const NAV_ITEMS: { id: AdminSection; label: string; icon: ReactNode }[] =
   { id: "materials", label: "Nguyên liệu", icon: <ClipboardCheck size={18} /> },
   { id: "gptPlus", label: "Check GPT Plus", icon: <MailCheck size={18} /> },
   { id: "orders", label: "Đơn hàng", icon: <ClipboardList size={18} /> },
+  { id: "revenue", label: "Doanh thu", icon: <DollarSign size={18} /> },
   { id: "users", label: "Khách hàng", icon: <Users size={18} /> },
 ];
 

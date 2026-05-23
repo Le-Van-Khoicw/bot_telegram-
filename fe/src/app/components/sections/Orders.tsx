@@ -15,7 +15,7 @@ type OrderStatus = "PENDING" | "PAID" | "DELIVERED" | "EXPIRED" | "CANCELLED";
 type OrderFilter = OrderStatus | "ALL" | "FAILED";
 type GptMark = { value: string; status?: string; note?: string };
 type OrderView = "orders" | "revenue";
-type RevenuePeriod = "day" | "week" | "month" | "year";
+type RevenuePeriod = "day" | "seven" | "week" | "month" | "year";
 
 interface Props {
   data: AdminSnapshot | null;
@@ -58,8 +58,11 @@ function periodRange(period: RevenuePeriod) {
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
 
-  if (period === "week") {
+  if (period === "seven") {
     start.setDate(start.getDate() - 6);
+  } else if (period === "week") {
+    const day = start.getDay() || 7;
+    start.setDate(start.getDate() - day + 1);
   } else if (period === "month") {
     start.setDate(1);
   } else if (period === "year") {
@@ -79,7 +82,8 @@ function isInPeriod(value: any, period: RevenuePeriod) {
 
 function periodLabel(period: RevenuePeriod) {
   if (period === "day") return "hôm nay";
-  if (period === "week") return "7 ngày gần nhất";
+  if (period === "seven") return "7 ngày gần nhất";
+  if (period === "week") return "tuần này";
   if (period === "month") return "tháng này";
   return "năm nay";
 }
@@ -313,7 +317,8 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
         <>
           <div className="flex flex-wrap gap-2">
             {([
-              ["day", "Ngày"],
+              ["day", "Hôm nay"],
+              ["seven", "7 ngày"],
               ["week", "Tuần"],
               ["month", "Tháng"],
               ["year", "Năm"],
