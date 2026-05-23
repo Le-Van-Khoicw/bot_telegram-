@@ -183,6 +183,21 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
   const periodExpenses = (data?.expenses || []).filter((expense) => isInPeriod(expense.date || expense.created_at, revenuePeriod));
   const selectedExpense = periodExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
   const selectedProfit = selectedRevenue - selectedExpense;
+  const expenseGroups = useMemo(() => {
+    const map = new Map<string, { name: string; amount: number; count: number; notes: string[] }>();
+    for (const expense of periodExpenses) {
+      const name = text(expense.name) === "â€”" ? "Khác" : text(expense.name);
+      const note = text(expense.note);
+      const current = map.get(name) || { name, amount: 0, count: 0, notes: [] };
+      current.amount += Number(expense.amount || 0);
+      current.count += 1;
+      if (note !== "â€”" && !current.notes.includes(note)) current.notes.push(note);
+      map.set(name, current);
+    }
+    return Array.from(map.values()).sort((a, b) => b.amount - a.amount);
+  }, [periodExpenses]);
+  const maxExpenseGroup = Math.max(1, ...expenseGroups.map((item) => item.amount));
+  const biggestExpense = expenseGroups[0];
 
   const visible = orders.filter((order) => {
     const status = text(order.status).toUpperCase();
@@ -342,7 +357,75 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
                 <p className="text-xs text-muted-foreground">Doanh thu - chi phí</p>
               </CardContent>
             </Card>
+            <Card className="shadow-sm">
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">Chi nhiều nhất</p>
+                <p className="mt-2 truncate text-lg font-semibold text-slate-900">{biggestExpense?.name || "Chưa có"}</p>
+                <p className="text-xs text-muted-foreground">{biggestExpense ? money(biggestExpense.amount) : "0đ"}</p>
+              </CardContent>
+            </Card>
           </div>
+
+          <Card className="shadow-sm">
+            <CardContent className="space-y-4 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-semibold">Phân tích chi phí</h3>
+                  <p className="text-xs text-muted-foreground">Gom theo tên khoản chi bạn nhập để biết tiền đang đi vào đâu.</p>
+                </div>
+                <Badge variant="outline">{expenseGroups.length} mục</Badge>
+              </div>
+
+              {expenseGroups.length ? (
+                <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
+                  <div className="space-y-3">
+                    {expenseGroups.slice(0, 8).map((group) => {
+                      const percent = Math.max(4, Math.round((group.amount / maxExpenseGroup) * 100));
+                      return (
+                        <div key={group.name} className="space-y-1">
+                          <div className="flex items-center justify-between gap-2 text-sm">
+                            <span className="truncate font-medium">{group.name}</span>
+                            <span className="whitespace-nowrap text-red-600">{money(group.amount)}</span>
+                          </div>
+                          <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+                            <div className="h-full rounded-full bg-red-500" style={{ width: `${percent}%` }} />
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">{group.count} khoản chi</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <Table className="min-w-[520px]">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Mục chi</TableHead>
+                          <TableHead className="text-center">Lần</TableHead>
+                          <TableHead>Ghi chú</TableHead>
+                          <TableHead className="text-right">Tổng</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {expenseGroups.map((group) => (
+                          <TableRow key={group.name}>
+                            <TableCell className="font-medium">{group.name}</TableCell>
+                            <TableCell className="text-center">{group.count}</TableCell>
+                            <TableCell className="max-w-[260px] truncate text-muted-foreground">{group.notes.slice(0, 2).join(" / ") || "—"}</TableCell>
+                            <TableCell className="text-right text-red-600">{money(group.amount)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
+                  Chưa có chi phí trong kỳ này. Nhập khoản chi ở form bên dưới để xem biểu đồ.
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           <Card className="shadow-sm">
             <CardContent className="space-y-3 p-4">
