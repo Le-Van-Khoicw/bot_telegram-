@@ -3,12 +3,10 @@ import { ArrowLeft, CalendarDays, ClipboardList, DollarSign, Plus, Search, Shopp
 import { toast } from "sonner";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Calendar } from "../ui/calendar";
 import { Card, CardContent } from "../ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../api";
@@ -52,10 +50,6 @@ function parseVnDateKey(key: string) {
   if (!key) return null;
   const date = new Date(`${key}T00:00:00+07:00`);
   return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function dateToVnKey(date: Date) {
-  return date.toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
 }
 
 function periodRange(period: RevenuePeriod, selectedDateKey = "") {
@@ -258,9 +252,9 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
     setFilterDateField("created_at");
   };
 
-  const applyRevenueDate = (date?: Date) => {
-    if (!date) return;
-    setRevenueDateKey(dateToVnKey(date));
+  const applyRevenueDate = (key: string) => {
+    if (!key) return;
+    setRevenueDateKey(key);
     setRevenuePeriod("custom");
   };
 
@@ -357,20 +351,15 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
                 {label}
               </Button>
             ))}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="h-10 gap-2">
-                  <CalendarDays size={15} /> Chọn ngày
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-auto p-0">
-                <Calendar
-                  mode="single"
-                  selected={parseVnDateKey(revenueDateKey) || undefined}
-                  onSelect={applyRevenueDate}
-                />
-              </PopoverContent>
-            </Popover>
+            <div className="relative">
+              <CalendarDays size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="date"
+                value={revenueDateKey}
+                onChange={(event) => applyRevenueDate(event.target.value)}
+                className="h-10 w-[170px] pl-9 font-medium"
+              />
+            </div>
             <Button
               variant="secondary"
               size="sm"
