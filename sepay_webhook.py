@@ -855,7 +855,7 @@ async def process_payment(payload: Dict[str, Any]) -> None:
                         text=(
                             "🎁 *Bạn vừa nhận mã khuyến mãi!*\n\n"
                             f"Mã: `{award.get('code')}`\n"
-                            f"Giảm: *{award.get('discount_percent')}%* cho đơn tiếp theo\n"
+                            f"Giảm: *{shop.fmt_price(shop.normalize_int(award.get('discount_amount') or award.get('discount_percent'), 0))}* cho đơn tiếp theo\n"
                             f"Hạn dùng: `{award.get('expires_at')}`\n\n"
                             "Đơn sau bot sẽ tự áp mã còn hiệu lực cho bạn."
                         ),

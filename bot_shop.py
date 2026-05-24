@@ -118,8 +118,8 @@ PENDING_QTY: Dict[int, Dict[str, Any]] = {}  # user_id -> {"product_id": ...}
 SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}
 SESSION_EXPIRY_SECONDS = 600  # 10 minutes
 CHECKOUT_IN_PROGRESS: set[int] = set()
-PROMOTION_HEADERS = ["id", "code", "discount_percent", "required_orders", "expires_days", "status", "note", "created_at", "updated_at"]
-PROMO_AWARD_HEADERS = ["user_id", "promo_id", "code", "discount_percent", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
+PROMOTION_HEADERS = ["id", "code", "discount_amount", "min_order_total", "required_orders", "expires_days", "status", "note", "created_at", "updated_at"]
+PROMO_AWARD_HEADERS = ["user_id", "promo_id", "code", "discount_amount", "min_order_total", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
 PROMO_SETTINGS_HEADERS = ["key", "value", "updated_at"]
 
 
@@ -740,7 +740,8 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
         promo_id = str(promo.get("id") or "").strip()
         code_base = str(promo.get("code") or "").strip().upper()
         required = normalize_int(promo.get("required_orders"), 0)
-        discount = normalize_int(promo.get("discount_percent"), 0)
+        discount = normalize_int(promo.get("discount_amount") or promo.get("discount_percent"), 0)
+        min_order_total = normalize_int(promo.get("min_order_total"), 0)
         if not promo_id or not code_base or required <= 0 or discount <= 0:
             continue
         if delivered_count < required or (str(user_id), promo_id) in existing_keys:
@@ -752,7 +753,8 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
             "user_id": str(user_id),
             "promo_id": promo_id,
             "code": code,
-            "discount_percent": str(discount),
+            "discount_amount": str(discount),
+            "min_order_total": str(min_order_total),
             "status": "ACTIVE",
             "awarded_at": now,
             "expires_at": expires_at,
@@ -782,7 +784,7 @@ def best_available_promo_award(user_id: int) -> Optional[Dict[str, str]]:
         if exp and exp < now:
             continue
         candidates.append(row)
-    candidates.sort(key=lambda x: normalize_int(x.get("discount_percent"), 0), reverse=True)
+    candidates.sort(key=lambda x: normalize_int(x.get("discount_amount") or x.get("discount_percent"), 0), reverse=True)
     return candidates[0] if candidates else None
 
 def mark_promo_award_used(user_id: int, code: str, order_id: str) -> None:
@@ -2161,7 +2163,7 @@ async def send_awarded_promos(context: ContextTypes.DEFAULT_TYPE, user_id: int, 
                 text=(
                     "🎁 *Bạn vừa nhận mã khuyến mãi!*\n\n"
                     f"Mã: `{award.get('code')}`\n"
-                    f"Giảm: *{award.get('discount_percent')}%* cho đơn tiếp theo\n"
+                    f"Giảm: *{fmt_price(normalize_int(award.get('discount_amount') or award.get('discount_percent'), 0))}* cho đơn tiếp theo\n"
                     f"Hạn dùng: `{award.get('expires_at')}`\n\n"
                     "Đơn sau bot sẽ tự áp mã còn hiệu lực cho bạn."
                 ),
@@ -2366,8 +2368,9 @@ async def checkout_flow(
     subtotal = sum(normalize_int(item.get("price"), int(product["price"])) for item in reserved_items)
     promo_award = await gs_call(best_available_promo_award, user_id)
     promo_code = str((promo_award or {}).get("code") or "")
-    promo_percent = normalize_int((promo_award or {}).get("discount_percent"), 0)
-    promo_discount = round(subtotal * promo_percent / 100) if promo_code and promo_percent > 0 else 0
+    promo_amount = normalize_int((promo_award or {}).get("discount_amount") or (promo_award or {}).get("discount_percent"), 0)
+    promo_min_total = normalize_int((promo_award or {}).get("min_order_total"), 0)
+    promo_discount = min(subtotal, promo_amount) if promo_code and promo_amount > 0 and subtotal >= promo_min_total else 0
     total = max(0, subtotal - promo_discount)
     unit_price = round(subtotal / qty) if qty > 0 else int(product["price"])
     price_notes = []
@@ -2382,7 +2385,7 @@ async def checkout_flow(
     if qty > 1 and len({normalize_int(item.get("price"), 0) for item in reserved_items}) > 1:
         price_notes.append("Đơn có nhiều item khác hạn, tổng tiền được cộng theo giá từng item.")
     if promo_discount > 0:
-        price_notes.append(f"Đã tự áp mã {promo_code}: giảm {promo_percent}% (-{fmt_price(promo_discount)}).")
+        price_notes.append(f"Đã tự áp mã {promo_code}: giảm {fmt_price(promo_discount)}.")
     price_note = " ".join(note for note in price_notes if note)
     qr_url = build_vietqr_image_url(order_id, total)
 

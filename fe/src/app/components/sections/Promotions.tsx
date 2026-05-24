@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch } from "../ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Textarea } from "../ui/textarea";
-import { adminApi, text, type AdminSnapshot, type AnyRow } from "../../api";
+import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../api";
 
 interface Props {
   data: AdminSnapshot | null;
@@ -19,7 +19,7 @@ interface Props {
   refresh: () => Promise<void>;
 }
 
-const EMPTY = { id: "", code: "", discount_percent: "10", required_orders: "10", expires_days: "7", status: "ACTIVE", note: "" };
+const EMPTY = { id: "", code: "", discount_amount: "20000", min_order_total: "50000", required_orders: "10", expires_days: "7", status: "ACTIVE", note: "" };
 
 export function Promotions({ data, adminKey, refresh }: Props) {
   const [open, setOpen] = useState(false);
@@ -46,7 +46,8 @@ export function Promotions({ data, adminKey, refresh }: Props) {
     setForm({
       id: text(promo.id) === "—" ? "" : text(promo.id),
       code: text(promo.code) === "—" ? "" : text(promo.code),
-      discount_percent: text(promo.discount_percent) === "—" ? "10" : text(promo.discount_percent),
+      discount_amount: text(promo.discount_amount || promo.discount_percent) === "—" ? "20000" : text(promo.discount_amount || promo.discount_percent),
+      min_order_total: text(promo.min_order_total) === "—" ? "50000" : text(promo.min_order_total),
       required_orders: text(promo.required_orders) === "—" ? "10" : text(promo.required_orders),
       expires_days: text(promo.expires_days) === "—" ? "7" : text(promo.expires_days),
       status: text(promo.status) === "PAUSED" ? "PAUSED" : "ACTIVE",
@@ -131,7 +132,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
               {promotions.map((promo) => (
                 <TableRow key={text(promo.id || promo.code)}>
                   <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.code)}</code></TableCell>
-                  <TableCell className="text-center">{text(promo.discount_percent)}%</TableCell>
+                  <TableCell className="text-center">{money(promo.discount_amount || promo.discount_percent)}</TableCell>
                   <TableCell className="text-center">{text(promo.required_orders)} đơn</TableCell>
                   <TableCell className="text-center">{text(promo.expires_days)} ngày</TableCell>
                   <TableCell className="text-center"><Badge variant={text(promo.status) === "PAUSED" ? "outline" : "default"}>{text(promo.status)}</Badge></TableCell>
@@ -165,7 +166,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                 <TableRow key={`${text(award.user_id)}-${text(award.code)}-${index}`}>
                   <TableCell className="font-mono text-xs">{text(award.user_id)}</TableCell>
                   <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(award.code)}</code></TableCell>
-                  <TableCell className="text-center">{text(award.discount_percent)}%</TableCell>
+                  <TableCell className="text-center">{money(award.discount_amount || award.discount_percent)}</TableCell>
                   <TableCell className="text-center"><Badge variant={text(award.status) === "USED" ? "secondary" : "default"}>{text(award.status)}</Badge></TableCell>
                   <TableCell className="text-xs text-muted-foreground">{text(award.expires_at)}</TableCell>
                   <TableCell className="font-mono text-xs">{text(award.used_order_id)}</TableCell>
@@ -182,8 +183,11 @@ export function Promotions({ data, adminKey, refresh }: Props) {
           <DialogHeader><DialogTitle>{form.id ? "Sửa mã khuyến mãi" : "Thêm mã khuyến mãi"}</DialogTitle></DialogHeader>
           <div className="space-y-3 py-2">
             <div className="space-y-1"><Label>Mã gốc</Label><Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} placeholder="THANK10" /></div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="space-y-1"><Label>Giảm %</Label><Input type="number" min="1" max="100" value={form.discount_percent} onChange={(e) => setForm({ ...form, discount_percent: e.target.value })} /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1"><Label>Số tiền giảm</Label><Input type="number" min="1" value={form.discount_amount} onChange={(e) => setForm({ ...form, discount_amount: e.target.value })} /></div>
+              <div className="space-y-1"><Label>Đơn tối thiểu</Label><Input type="number" min="0" value={form.min_order_total} onChange={(e) => setForm({ ...form, min_order_total: e.target.value })} /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1"><Label>Mốc đơn</Label><Input type="number" min="1" value={form.required_orders} onChange={(e) => setForm({ ...form, required_orders: e.target.value })} /></div>
               <div className="space-y-1"><Label>Hạn ngày</Label><Input type="number" min="1" value={form.expires_days} onChange={(e) => setForm({ ...form, expires_days: e.target.value })} /></div>
             </div>
