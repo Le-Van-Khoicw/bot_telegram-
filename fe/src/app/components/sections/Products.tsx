@@ -8,6 +8,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Badge } from "../ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
+import { Switch } from "../ui/switch";
 import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../api";
 
 interface Props {
@@ -16,12 +17,17 @@ interface Props {
   refresh: () => Promise<void>;
 }
 
-const EMPTY = { product_id: "", name: "", stock_code: "", price: "", duration_days: "", expires_at: "", description: "" };
+const EMPTY = { product_id: "", name: "", stock_code: "", price: "", duration_days: "", expires_at: "", pricing_enabled: "true", description: "" };
 
 const dateTimeLocal = (value: any) => {
   const raw = text(value);
   if (raw === "—" || raw === "â€”") return "";
   return raw.replace(" ", "T").slice(0, 16);
+};
+
+const isPricingEnabled = (value: any) => {
+  const raw = String(value ?? "").trim().toLowerCase();
+  return !["false", "0", "off", "no"].includes(raw);
 };
 
 export function Products({ data, adminKey, refresh }: Props) {
@@ -43,6 +49,7 @@ export function Products({ data, adminKey, refresh }: Props) {
       price: String(p.base_price || p.price || ""),
       duration_days: text(p.duration_days) === "—" ? "" : text(p.duration_days),
       expires_at: dateTimeLocal(p.expires_at),
+      pricing_enabled: isPricingEnabled(p.pricing_enabled) ? "true" : "false",
       description: text(p.description) === "—" ? "" : text(p.description),
     });
     setModalOpen(true);
@@ -99,6 +106,7 @@ export function Products({ data, adminKey, refresh }: Props) {
                 <TableHead className="text-right">Giá hiện tại</TableHead>
                 <TableHead className="text-right">Giá gốc</TableHead>
                 <TableHead className="text-center">Còn ngày</TableHead>
+                <TableHead className="text-center">Auto date</TableHead>
                 <TableHead className="text-center">READY</TableHead>
                 <TableHead className="text-center">HELD</TableHead>
                 <TableHead className="text-center">SOLD</TableHead>
@@ -114,6 +122,7 @@ export function Products({ data, adminKey, refresh }: Props) {
                   <TableCell className="text-right text-emerald-700">{money(p.price)}</TableCell>
                   <TableCell className="text-right">{money(p.base_price || p.price)}</TableCell>
                   <TableCell className="text-center">{p.is_time_priced ? text(p.remaining_days) : "—"}</TableCell>
+                  <TableCell className="text-center"><Badge variant={isPricingEnabled(p.pricing_enabled) ? "secondary" : "outline"}>{isPricingEnabled(p.pricing_enabled) ? "Bật" : "Tắt"}</Badge></TableCell>
                   <TableCell className="text-center"><Badge variant={Number(p.READY) > 0 ? "default" : "destructive"}>{p.READY || 0}</Badge></TableCell>
                   <TableCell className="text-center"><Badge variant={Number(p.HELD) > 0 ? "secondary" : "outline"}>{p.HELD || 0}</Badge></TableCell>
                   <TableCell className="text-center"><Badge variant="outline">{p.SOLD || 0}</Badge></TableCell>
@@ -123,7 +132,7 @@ export function Products({ data, adminKey, refresh }: Props) {
                   </TableCell>
                 </TableRow>
               ))}
-              {products.length === 0 && <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Chưa có sản phẩm</TableCell></TableRow>}
+              {products.length === 0 && <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">Chưa có sản phẩm</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>
@@ -140,6 +149,14 @@ export function Products({ data, adminKey, refresh }: Props) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1"><Label>Tổng số ngày</Label><Input type="number" min="0" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: e.target.value })} placeholder="Ví dụ: 7" /></div>
               <div className="space-y-1"><Label>Hết hạn lúc</Label><Input type="datetime-local" value={form.expires_at} onChange={(e) => setForm({ ...form, expires_at: e.target.value })} /></div>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+              <Label htmlFor="pricing_enabled">Bật giá tự giảm theo date</Label>
+              <Switch
+                id="pricing_enabled"
+                checked={form.pricing_enabled !== "false"}
+                onCheckedChange={(checked) => setForm({ ...form, pricing_enabled: checked ? "true" : "false" })}
+              />
             </div>
             <div className="space-y-1"><Label>Mô tả</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
           </div>

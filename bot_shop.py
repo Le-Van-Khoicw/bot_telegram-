@@ -237,6 +237,16 @@ def normalize_int(v: Any, default: int = 0) -> int:
     except Exception:
         return default
 
+def normalize_bool(v: Any, default: bool = True) -> bool:
+    raw = str(v or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"0", "false", "no", "off", "tat", "tắt"}:
+        return False
+    if raw in {"1", "true", "yes", "on", "bat", "bật"}:
+        return True
+    return default
+
 def parse_product_dt(value: Any) -> Optional[datetime]:
     raw = str(value or "").strip()
     if not raw:
@@ -307,7 +317,7 @@ def price_note_from_values(base_price: int, duration_days: int, remaining_days: 
         return f"Giá theo hạn sử dụng: item đã hết date ({expires_at})."
     return f"Giá tự giảm theo hạn sử dụng: giá gốc {fmt_price(base)} / {duration} ngày, còn {remaining} ngày, hết hạn {expires_at}."
 
-def stock_item_pricing(row: List[str], headers: Dict[str, int], fallback_price: int = 0) -> Dict[str, Any]:
+def stock_item_pricing(row: List[str], headers: Dict[str, int], fallback_price: int = 0, enable_time_pricing: bool = True) -> Dict[str, Any]:
     def cell(key: str) -> str:
         col = headers.get(key.lower())
         return row[col - 1].strip() if col and col - 1 < len(row) else ""
@@ -317,6 +327,8 @@ def stock_item_pricing(row: List[str], headers: Dict[str, int], fallback_price: 
         base_price = normalize_int(fallback_price, 0)
     duration_days = normalize_int(cell("duration_days") or cell("total_days"), 0)
     expires_at = cell("expires_at") or cell("expire_at") or cell("expiry_at")
+    if not enable_time_pricing:
+        return calculate_time_based_price(base_price, 0, "")
     return calculate_time_based_price(base_price, duration_days, expires_at)
 
 def generate_order_id() -> str:
@@ -660,7 +672,8 @@ def load_products() -> List[Dict[str, Any]]:
         base_price = normalize_int(r.get("price"), 0)
         duration_days = normalize_int(r.get("duration_days") or r.get("total_days"), 0)
         expires_at = (r.get("expires_at") or r.get("expire_at") or r.get("expiry_at") or "").strip()
-        pricing = calculate_time_based_price(base_price, duration_days, expires_at)
+        pricing_enabled = normalize_bool(r.get("pricing_enabled"), True)
+        pricing = calculate_time_based_price(base_price, duration_days, expires_at if pricing_enabled else "")
 
         # ✅ lấy mô tả riêng từng sản phẩm (từ cột description)
         desc = (r.get("description") or "").strip()
@@ -675,6 +688,7 @@ def load_products() -> List[Dict[str, Any]]:
                 "remaining_days": pricing["remaining_days"],
                 "expires_at": pricing["expires_at"],
                 "is_time_priced": pricing["is_time_priced"],
+                "pricing_enabled": pricing_enabled,
                 "stock_code": stock_code,
                 "description": desc,   # ✅ thêm field
             })
@@ -692,7 +706,10 @@ def stock_count_ready_by_code() -> Dict[str, int]:
             cnt[sc] = cnt.get(sc, 0) + 1
     return cnt
 
-def stock_price_preview_by_code(fallback_prices: Optional[Dict[str, int]] = None) -> Dict[str, Dict[str, Any]]:
+def stock_price_preview_by_code(
+    fallback_prices: Optional[Dict[str, int]] = None,
+    pricing_enabled_by_code: Optional[Dict[str, bool]] = None,
+) -> Dict[str, Dict[str, Any]]:
     init_sheets()
     rows = _ws_pool.get_all_values()
     if not rows or len(rows) < 2:
@@ -704,6 +721,7 @@ def stock_price_preview_by_code(fallback_prices: Optional[Dict[str, int]] = None
         return {}
 
     fallback_prices = fallback_prices or {}
+    pricing_enabled_by_code = pricing_enabled_by_code or {}
     previews: Dict[str, Dict[str, Any]] = {}
     preview_order: Dict[str, Tuple[str, int]] = {}
     for rownum, row in enumerate(rows[1:], start=2):
@@ -711,7 +729,12 @@ def stock_price_preview_by_code(fallback_prices: Optional[Dict[str, int]] = None
         status = row[c_status - 1].strip().upper() if c_status - 1 < len(row) else ""
         if not stock_code or status != "READY":
             continue
-        pricing = stock_item_pricing(row, headers, fallback_prices.get(stock_code, 0))
+        pricing = stock_item_pricing(
+            row,
+            headers,
+            fallback_prices.get(stock_code, 0),
+            pricing_enabled_by_code.get(stock_code, True),
+        )
         if normalize_int(pricing.get("price"), 0) <= 0:
             continue
         expires_at = str(pricing.get("expires_at") or "9999-12-31 23:59:59")
@@ -734,7 +757,14 @@ def find_product_by_stock_code(stock_code: str) -> Optional[Dict[str, Any]]:
     return None
 
 # ================== POOL + RESERVATIONS ==================
-def reserve_items_from_pool(stock_code: str, qty: int, order_id: str, hold_seconds: int, fallback_price: int = 0) -> List[Dict[str, Any]]:
+def reserve_items_from_pool(
+    stock_code: str,
+    qty: int,
+    order_id: str,
+    hold_seconds: int,
+    fallback_price: int = 0,
+    enable_time_pricing: bool = True,
+) -> List[Dict[str, Any]]:
     """
     Lấy qty item READY từ POOL theo stock_code -> set HELD + hold_order_id/hold_at/hold_expires_at
     + append RESERVATIONS
@@ -767,7 +797,7 @@ def reserve_items_from_pool(stock_code: str, qty: int, order_id: str, hold_secon
         if sc == stock_code and st == "READY":
             item_id = r[col_item_id - 1].strip() if col_item_id - 1 < len(r) else ""
             secret = r[col_secret - 1].strip() if col_secret - 1 < len(r) else ""
-            pricing = stock_item_pricing(r, hmap, fallback_price)
+            pricing = stock_item_pricing(r, hmap, fallback_price, enable_time_pricing)
             if normalize_int(pricing.get("price"), 0) <= 0:
                 continue
             ready_items.append((idx, {
@@ -1742,7 +1772,8 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         products = await gs_call(load_products_cached)
         stock_ready = await gs_call(stock_count_ready_by_code_cached)
         fallback_prices = {p["stock_code"]: int(p["price"]) for p in products}
-        stock_prices = await gs_call(stock_price_preview_by_code, fallback_prices)
+        pricing_enabled = {p["stock_code"]: bool(p.get("pricing_enabled", True)) for p in products}
+        stock_prices = await gs_call(stock_price_preview_by_code, fallback_prices, pricing_enabled)
         products = [{**p, **stock_prices.get(p["stock_code"], {})} for p in products]
     except Exception as e:
         logger.exception("show_products error")
@@ -1783,7 +1814,11 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     ready_map = await gs_call(stock_count_ready_by_code_cached)
     ready = ready_map.get(p["stock_code"], 0)
-    stock_prices = await gs_call(stock_price_preview_by_code, {p["stock_code"]: int(p["price"])})
+    stock_prices = await gs_call(
+        stock_price_preview_by_code,
+        {p["stock_code"]: int(p["price"])},
+        {p["stock_code"]: bool(p.get("pricing_enabled", True))},
+    )
     p = {**p, **stock_prices.get(p["stock_code"], {})}
     await q.edit_message_text(
         product_detail_text(p, ready),
@@ -2086,7 +2121,7 @@ async def checkout_flow(
     # ✅ giữ kho chạy trong thread
     reserved_items = await gs_call(
         reserve_items_from_pool,
-        product["stock_code"], qty, order_id, ORDER_TTL_SECONDS, int(product["price"])
+        product["stock_code"], qty, order_id, ORDER_TTL_SECONDS, int(product["price"]), bool(product.get("pricing_enabled", True))
     )
     if len(reserved_items) < qty:
         msg = "❌ Không thể giữ kho (POOL). Vui lòng nhập lại số lượng hoặc thử lại."
