@@ -328,7 +328,7 @@ def stock_item_pricing(row: List[str], headers: Dict[str, int], fallback_price: 
     expires_at = cell("expires_at") or cell("expire_at") or cell("expiry_at")
     if not enable_time_pricing or duration_days <= 0 or not expires_at:
         return calculate_time_based_price(fallback_price, 0, "")
-    base_price = item_base_price if item_base_price > 0 else fallback_price
+    base_price = fallback_price if fallback_price > 0 else item_base_price
     return calculate_time_based_price(base_price, duration_days, expires_at)
 
 def generate_order_id() -> str:
