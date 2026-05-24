@@ -30,6 +30,20 @@ def _headers(ws) -> Dict[str, int]:
     return shop.headers_map(ws) if ws else {}
 
 
+def _ensure_headers(ws, required: List[str]) -> Dict[str, int]:
+    headers = _headers(ws)
+    cells: List[Cell] = []
+    for key in required:
+        lower = key.lower()
+        if lower not in headers:
+            col = len(headers) + 1
+            headers[lower] = col
+            cells.append(Cell(1, col, key))
+    if cells:
+        ws.update_cells(cells, value_input_option="USER_ENTERED")
+    return headers
+
+
 def _row_from_headers(headers: Dict[str, int], data: Dict[str, Any]) -> List[str]:
     row = [""] * len(headers)
     for key, value in data.items():
@@ -644,6 +658,11 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
             "name": product.get("name", ""),
             "stock_code": code,
             "price": product.get("price", 0),
+            "base_price": product.get("base_price", product.get("price", 0)),
+            "duration_days": product.get("duration_days", ""),
+            "remaining_days": product.get("remaining_days", ""),
+            "expires_at": product.get("expires_at", ""),
+            "is_time_priced": product.get("is_time_priced", False),
             "description": product.get("description", ""),
             **counts,
         })
@@ -714,6 +733,7 @@ def save_product(data: Dict[str, Any]) -> Dict[str, Any]:
     headers = _headers(shop._ws_products)
     if not headers:
         raise RuntimeError("PRODUCTS thieu header")
+    headers = _ensure_headers(shop._ws_products, ["duration_days", "expires_at"])
 
     product_id = (data.get("product_id") or "").strip()
     stock_code = (data.get("stock_code") or "").strip()
@@ -728,6 +748,8 @@ def save_product(data: Dict[str, Any]) -> Dict[str, Any]:
         "name": name,
         "stock_code": stock_code,
         "price": shop.normalize_int(data.get("price"), 0),
+        "duration_days": shop.normalize_int(data.get("duration_days"), 0),
+        "expires_at": str(data.get("expires_at") or "").strip(),
         "description": data.get("description", ""),
     }
 
@@ -760,6 +782,7 @@ def add_stock(data: Dict[str, Any]) -> Dict[str, Any]:
     headers = _headers(shop._ws_pool)
     if not headers:
         raise RuntimeError("POOL thieu header")
+    headers = _ensure_headers(shop._ws_pool, ["base_price", "duration_days", "expires_at"])
 
     stock_code = (data.get("stock_code") or "").strip()
     raw_items = (data.get("items") or data.get("secret") or "").strip()
@@ -772,6 +795,9 @@ def add_stock(data: Dict[str, Any]) -> Dict[str, Any]:
     seen_keys = set()
     clean_secrets = []
     duplicate_secrets = []
+    base_price = shop.normalize_int(data.get("base_price") or data.get("price"), 0)
+    duration_days = shop.normalize_int(data.get("duration_days"), 0)
+    expires_at = str(data.get("expires_at") or "").strip()
     for secret in secrets:
         key = _secret_key(secret)
         if key in existing_keys or key in seen_keys:
@@ -786,6 +812,9 @@ def add_stock(data: Dict[str, Any]) -> Dict[str, Any]:
             "item_id": _make_item_id(stock_code),
             "stock_code": stock_code,
             "secret": secret,
+            "base_price": base_price,
+            "duration_days": duration_days,
+            "expires_at": expires_at,
             "status": "READY",
             "hold_order_id": "",
             "hold_at": "",

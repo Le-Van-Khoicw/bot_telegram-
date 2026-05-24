@@ -9,7 +9,7 @@ import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Warehouse, Plus, RotateCcw, Copy } from "lucide-react";
 import { toast } from "sonner";
-import { adminApi, text, type AdminSnapshot } from "../../api";
+import { adminApi, money, text, type AdminSnapshot } from "../../api";
 
 interface Props {
   data: AdminSnapshot | null;
@@ -32,6 +32,9 @@ const countLines = (value: string) => value.split(/\r?\n/).filter((line) => line
 export function Inventory({ data, adminKey, refresh, preset }: Props) {
   const [addCode, setAddCode] = useState("");
   const [addData, setAddData] = useState("");
+  const [addBasePrice, setAddBasePrice] = useState("");
+  const [addDurationDays, setAddDurationDays] = useState("");
+  const [addExpiresAt, setAddExpiresAt] = useState("");
   const [duplicateData, setDuplicateData] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [filterCode, setFilterCode] = useState("ALL");
@@ -122,7 +125,13 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
     try {
       const result = await adminApi<{ added: number; skipped_duplicates?: string[] }>("/admin/api/stock", adminKey, {
         method: "POST",
-        body: JSON.stringify({ stock_code: addCode, items: cleanLines.join("\n") }),
+        body: JSON.stringify({
+          stock_code: addCode,
+          items: cleanLines.join("\n"),
+          base_price: addBasePrice,
+          duration_days: addDurationDays,
+          expires_at: addExpiresAt,
+        }),
       });
       const duplicates = [...duplicateLines, ...(result.skipped_duplicates || [])];
       setAddData("");
@@ -244,12 +253,15 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
 
           <Card className="shadow-sm">
             <CardContent className="p-0 overflow-x-auto">
-              <Table className="min-w-[1040px]">
+              <Table className="min-w-[1240px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Item ID</TableHead>
                     <TableHead>Stock Code</TableHead>
                     <TableHead>Secret</TableHead>
+                    <TableHead className="text-right">Giá gốc</TableHead>
+                    <TableHead className="text-center">Tổng ngày</TableHead>
+                    <TableHead>Hết date</TableHead>
                     <TableHead className="text-center">Status</TableHead>
                     <TableHead>Hold Order</TableHead>
                     <TableHead>Hết hạn giữ</TableHead>
@@ -280,6 +292,9 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                             {isDie && <Badge variant="destructive" className="shrink-0">Die</Badge>}
                           </span>
                         </TableCell>
+                        <TableCell className="text-right">{item.base_price || item.price ? money(item.base_price || item.price) : "—"}</TableCell>
+                        <TableCell className="text-center">{text(item.duration_days)}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{text(item.expires_at)}</TableCell>
                         <TableCell className="text-center"><StockBadge status={text(item.status)} /></TableCell>
                         <TableCell className="text-xs text-muted-foreground">{text(item.hold_order_id)}</TableCell>
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{text(item.hold_expires_at)}</TableCell>
@@ -297,7 +312,7 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                       </TableRow>
                     );
                   })}
-                  {visible.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Không có stock nào</TableCell></TableRow>}
+                  {visible.length === 0 && <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">Không có stock nào</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </CardContent>
@@ -317,6 +332,9 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                     </SelectContent>
                   </Select>
                   <Input placeholder="Stock code, ví dụ GPT1M" value={addCode} onChange={(e) => setAddCode(e.target.value.toUpperCase())} />
+                  <Input type="number" placeholder="Giá gốc, ví dụ 20000" value={addBasePrice} onChange={(e) => setAddBasePrice(e.target.value)} />
+                  <Input type="number" min="0" placeholder="Tổng số ngày, ví dụ 7" value={addDurationDays} onChange={(e) => setAddDurationDays(e.target.value)} />
+                  <Input type="datetime-local" value={addExpiresAt} onChange={(e) => setAddExpiresAt(e.target.value)} />
                   <Button className="w-full gap-2" onClick={addStock} disabled={busy || !addCode || !addData.trim()}>
                     <Plus size={15} /> Thêm vào kho
                   </Button>

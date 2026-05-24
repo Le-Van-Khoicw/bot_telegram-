@@ -16,7 +16,13 @@ interface Props {
   refresh: () => Promise<void>;
 }
 
-const EMPTY = { product_id: "", name: "", stock_code: "", price: "", description: "" };
+const EMPTY = { product_id: "", name: "", stock_code: "", price: "", duration_days: "", expires_at: "", description: "" };
+
+const dateTimeLocal = (value: any) => {
+  const raw = text(value);
+  if (raw === "—" || raw === "â€”") return "";
+  return raw.replace(" ", "T").slice(0, 16);
+};
 
 export function Products({ data, adminKey, refresh }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -34,7 +40,9 @@ export function Products({ data, adminKey, refresh }: Props) {
       product_id: text(p.product_id) === "—" ? "" : text(p.product_id),
       name: text(p.name) === "—" ? "" : text(p.name),
       stock_code: text(p.stock_code) === "—" ? "" : text(p.stock_code),
-      price: String(p.price || ""),
+      price: String(p.base_price || p.price || ""),
+      duration_days: text(p.duration_days) === "—" ? "" : text(p.duration_days),
+      expires_at: dateTimeLocal(p.expires_at),
       description: text(p.description) === "—" ? "" : text(p.description),
     });
     setModalOpen(true);
@@ -83,12 +91,14 @@ export function Products({ data, adminKey, refresh }: Props) {
 
       <Card className="shadow-sm">
         <CardContent className="p-0 overflow-x-auto">
-          <Table className="min-w-[760px]">
+          <Table className="min-w-[940px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Tên sản phẩm</TableHead>
                 <TableHead>Stock Code</TableHead>
-                <TableHead className="text-right">Giá</TableHead>
+                <TableHead className="text-right">Giá hiện tại</TableHead>
+                <TableHead className="text-right">Giá gốc</TableHead>
+                <TableHead className="text-center">Còn ngày</TableHead>
                 <TableHead className="text-center">READY</TableHead>
                 <TableHead className="text-center">HELD</TableHead>
                 <TableHead className="text-center">SOLD</TableHead>
@@ -102,6 +112,8 @@ export function Products({ data, adminKey, refresh }: Props) {
                   <TableCell className="font-medium">{text(p.name)}</TableCell>
                   <TableCell><code className="bg-muted px-1.5 py-0.5 rounded text-xs">{text(p.stock_code)}</code></TableCell>
                   <TableCell className="text-right text-emerald-700">{money(p.price)}</TableCell>
+                  <TableCell className="text-right">{money(p.base_price || p.price)}</TableCell>
+                  <TableCell className="text-center">{p.is_time_priced ? text(p.remaining_days) : "—"}</TableCell>
                   <TableCell className="text-center"><Badge variant={Number(p.READY) > 0 ? "default" : "destructive"}>{p.READY || 0}</Badge></TableCell>
                   <TableCell className="text-center"><Badge variant={Number(p.HELD) > 0 ? "secondary" : "outline"}>{p.HELD || 0}</Badge></TableCell>
                   <TableCell className="text-center"><Badge variant="outline">{p.SOLD || 0}</Badge></TableCell>
@@ -111,20 +123,24 @@ export function Products({ data, adminKey, refresh }: Props) {
                   </TableCell>
                 </TableRow>
               ))}
-              {products.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Chưa có sản phẩm</TableCell></TableRow>}
+              {products.length === 0 && <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Chưa có sản phẩm</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{form.product_id ? "Sửa sản phẩm" : "Thêm sản phẩm"}</DialogTitle></DialogHeader>
           <div className="space-y-3 py-2">
             <div className="space-y-1"><Label>Product ID</Label><Input value={form.product_id} onChange={(e) => setForm({ ...form, product_id: e.target.value })} placeholder="Bỏ trống để tự tạo" /></div>
             <div className="space-y-1"><Label>Tên sản phẩm</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="space-y-1"><Label>Stock Code</Label><Input value={form.stock_code} onChange={(e) => setForm({ ...form, stock_code: e.target.value.toUpperCase() })} /></div>
-            <div className="space-y-1"><Label>Giá</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
+            <div className="space-y-1"><Label>Giá gốc</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1"><Label>Tổng số ngày</Label><Input type="number" min="0" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: e.target.value })} placeholder="Ví dụ: 7" /></div>
+              <div className="space-y-1"><Label>Hết hạn lúc</Label><Input type="datetime-local" value={form.expires_at} onChange={(e) => setForm({ ...form, expires_at: e.target.value })} /></div>
+            </div>
             <div className="space-y-1"><Label>Mô tả</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
           </div>
           <DialogFooter>

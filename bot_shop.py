@@ -6,6 +6,7 @@ import random
 import string
 import asyncio
 import time
+import math
 import base64
 import hmac
 import hashlib
@@ -236,6 +237,88 @@ def normalize_int(v: Any, default: int = 0) -> int:
     except Exception:
         return default
 
+def parse_product_dt(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    raw = raw.replace("T", " ")
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        raw = f"{raw} 23:59:59"
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except Exception:
+            pass
+    return None
+
+def calculate_time_based_price(base_price: int, duration_days: int, expires_at: Any) -> Dict[str, Any]:
+    """
+    Gia hien tai = gia goc * so ngay con lai / tong so ngay.
+    Neu san pham khong co duration_days/expires_at thi giu nguyen gia goc.
+    """
+    base_price = normalize_int(base_price, 0)
+    duration_days = normalize_int(duration_days, 0)
+    expire_dt = parse_product_dt(expires_at)
+    if base_price <= 0 or duration_days <= 0 or not expire_dt:
+        return {
+            "price": base_price,
+            "base_price": base_price,
+            "duration_days": duration_days,
+            "remaining_days": "",
+            "expires_at": str(expires_at or "").strip(),
+            "is_time_priced": False,
+        }
+
+    remaining_seconds = (expire_dt - now_dt()).total_seconds()
+    remaining_days = max(0, math.ceil(remaining_seconds / 86400))
+    billable_days = min(remaining_days, duration_days)
+    current_price = round(base_price * billable_days / duration_days) if billable_days > 0 else 0
+
+    return {
+        "price": current_price,
+        "base_price": base_price,
+        "duration_days": duration_days,
+        "remaining_days": remaining_days,
+        "expires_at": expire_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "is_time_priced": True,
+    }
+
+def product_price_note(product: Dict[str, Any]) -> str:
+    if not product.get("is_time_priced"):
+        return ""
+    remaining_days = normalize_int(product.get("remaining_days"), 0)
+    duration_days = normalize_int(product.get("duration_days"), 0)
+    base_price = normalize_int(product.get("base_price"), normalize_int(product.get("price"), 0))
+    expires_at = str(product.get("expires_at") or "").strip()
+    if remaining_days <= 0:
+        return f"⏳ Giá theo hạn sử dụng: sản phẩm đã hết date ({expires_at})."
+    return (
+        f"⏳ Giá tự giảm theo hạn sử dụng: giá gốc {fmt_price(base_price)} / "
+        f"{duration_days} ngày, còn {remaining_days} ngày, hết hạn {expires_at}."
+    )
+
+def price_note_from_values(base_price: int, duration_days: int, remaining_days: Any, expires_at: str) -> str:
+    remaining = normalize_int(remaining_days, 0)
+    duration = normalize_int(duration_days, 0)
+    base = normalize_int(base_price, 0)
+    if base <= 0 or duration <= 0 or not expires_at:
+        return ""
+    if remaining <= 0:
+        return f"Giá theo hạn sử dụng: item đã hết date ({expires_at})."
+    return f"Giá tự giảm theo hạn sử dụng: giá gốc {fmt_price(base)} / {duration} ngày, còn {remaining} ngày, hết hạn {expires_at}."
+
+def stock_item_pricing(row: List[str], headers: Dict[str, int], fallback_price: int = 0) -> Dict[str, Any]:
+    def cell(key: str) -> str:
+        col = headers.get(key.lower())
+        return row[col - 1].strip() if col and col - 1 < len(row) else ""
+
+    base_price = normalize_int(cell("base_price") or cell("price"), 0)
+    if base_price <= 0:
+        base_price = normalize_int(fallback_price, 0)
+    duration_days = normalize_int(cell("duration_days") or cell("total_days"), 0)
+    expires_at = cell("expires_at") or cell("expire_at") or cell("expiry_at")
+    return calculate_time_based_price(base_price, duration_days, expires_at)
+
 def generate_order_id() -> str:
     suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
     # KHÔNG có dấu '-'
@@ -310,6 +393,7 @@ def build_checkout_caption_with_countdown(
     total: int,
     remain_seconds: int,
     status_line: str = "⏳ *ĐANG CHỜ THANH TOÁN*",
+    price_note: str = "",
 ) -> str:
     remain_text = format_countdown(remain_seconds)
     bank_acc = PAYMENT_INFO["bank_number"]
@@ -317,11 +401,13 @@ def build_checkout_caption_with_countdown(
     safe_product_name = escape_markdown(str(product_name), version=1)
 
     pay_note = normalize_order_ref(order_id) # hàm của bạn đã bỏ ký tự lạ
+    price_note_line = f"ℹ️ {price_note}\n" if price_note else ""
 
     return (
         f"{status_line}\n\n"
         f"🧾 Mã đơn: `{order_id}`\n"
         f"📦 SP: *{safe_product_name}* — {fmt_price(unit_price)}\n"
+        f"{price_note_line}"
         f"🔢 SL: *{qty}*\n"
         f"💰 Tổng: *{fmt_price(total)}*\n\n"
         f"⏳ *Hết hạn sau:* `{remain_text}`\n\n"
@@ -571,7 +657,10 @@ def load_products() -> List[Dict[str, Any]]:
         product_id = (r.get("product_id") or "").strip()
         name = (r.get("name") or "").strip()
         stock_code = (r.get("stock_code") or "").strip()
-        price = normalize_int(r.get("price"), 0)
+        base_price = normalize_int(r.get("price"), 0)
+        duration_days = normalize_int(r.get("duration_days") or r.get("total_days"), 0)
+        expires_at = (r.get("expires_at") or r.get("expire_at") or r.get("expiry_at") or "").strip()
+        pricing = calculate_time_based_price(base_price, duration_days, expires_at)
 
         # ✅ lấy mô tả riêng từng sản phẩm (từ cột description)
         desc = (r.get("description") or "").strip()
@@ -580,7 +669,12 @@ def load_products() -> List[Dict[str, Any]]:
             out.append({
                 "product_id": product_id,
                 "name": name,
-                "price": price,
+                "price": pricing["price"],
+                "base_price": pricing["base_price"],
+                "duration_days": pricing["duration_days"],
+                "remaining_days": pricing["remaining_days"],
+                "expires_at": pricing["expires_at"],
+                "is_time_priced": pricing["is_time_priced"],
                 "stock_code": stock_code,
                 "description": desc,   # ✅ thêm field
             })
@@ -598,6 +692,35 @@ def stock_count_ready_by_code() -> Dict[str, int]:
             cnt[sc] = cnt.get(sc, 0) + 1
     return cnt
 
+def stock_price_preview_by_code(fallback_prices: Optional[Dict[str, int]] = None) -> Dict[str, Dict[str, Any]]:
+    init_sheets()
+    rows = _ws_pool.get_all_values()
+    if not rows or len(rows) < 2:
+        return {}
+    headers = {str(h).strip().lower(): i for i, h in enumerate(rows[0], start=1)}
+    c_stock = headers.get("stock_code")
+    c_status = headers.get("status")
+    if not (c_stock and c_status):
+        return {}
+
+    fallback_prices = fallback_prices or {}
+    previews: Dict[str, Dict[str, Any]] = {}
+    preview_order: Dict[str, Tuple[str, int]] = {}
+    for rownum, row in enumerate(rows[1:], start=2):
+        stock_code = row[c_stock - 1].strip() if c_stock - 1 < len(row) else ""
+        status = row[c_status - 1].strip().upper() if c_status - 1 < len(row) else ""
+        if not stock_code or status != "READY":
+            continue
+        pricing = stock_item_pricing(row, headers, fallback_prices.get(stock_code, 0))
+        if normalize_int(pricing.get("price"), 0) <= 0:
+            continue
+        expires_at = str(pricing.get("expires_at") or "9999-12-31 23:59:59")
+        key = (expires_at, rownum)
+        if stock_code not in previews or key < preview_order[stock_code]:
+            previews[stock_code] = pricing
+            preview_order[stock_code] = key
+    return previews
+
 def find_product_by_id(pid: str) -> Optional[Dict[str, Any]]:
     for p in load_products_cached():
         if p["product_id"] == pid:
@@ -611,7 +734,7 @@ def find_product_by_stock_code(stock_code: str) -> Optional[Dict[str, Any]]:
     return None
 
 # ================== POOL + RESERVATIONS ==================
-def reserve_items_from_pool(stock_code: str, qty: int, order_id: str, hold_seconds: int) -> List[Dict[str, str]]:
+def reserve_items_from_pool(stock_code: str, qty: int, order_id: str, hold_seconds: int, fallback_price: int = 0) -> List[Dict[str, Any]]:
     """
     Lấy qty item READY từ POOL theo stock_code -> set HELD + hold_order_id/hold_at/hold_expires_at
     + append RESERVATIONS
@@ -636,7 +759,7 @@ def reserve_items_from_pool(stock_code: str, qty: int, order_id: str, hold_secon
     now = now_str()
     exp = (now_dt() + timedelta(seconds=hold_seconds)).strftime("%Y-%m-%d %H:%M:%S")
 
-    selected: List[Tuple[int, Dict[str, str]]] = []
+    ready_items: List[Tuple[int, Dict[str, Any]]] = []
     for idx in range(2, len(rows) + 1):
         r = rows[idx - 1]
         sc = r[col_stock - 1].strip() if col_stock - 1 < len(r) else ""
@@ -644,9 +767,21 @@ def reserve_items_from_pool(stock_code: str, qty: int, order_id: str, hold_secon
         if sc == stock_code and st == "READY":
             item_id = r[col_item_id - 1].strip() if col_item_id - 1 < len(r) else ""
             secret = r[col_secret - 1].strip() if col_secret - 1 < len(r) else ""
-            selected.append((idx, {"item_id": item_id, "stock_code": sc, "secret": secret}))
-            if len(selected) >= qty:
-                break
+            pricing = stock_item_pricing(r, hmap, fallback_price)
+            if normalize_int(pricing.get("price"), 0) <= 0:
+                continue
+            ready_items.append((idx, {
+                "item_id": item_id,
+                "stock_code": sc,
+                "secret": secret,
+                **pricing,
+            }))
+
+    def item_sort_key(item: Tuple[int, Dict[str, Any]]) -> Tuple[str, int]:
+        expires_at = str(item[1].get("expires_at") or "9999-12-31 23:59:59")
+        return (expires_at, item[0])
+
+    selected = sorted(ready_items, key=item_sort_key)[:qty]
 
     if len(selected) < qty:
         return []
@@ -1205,7 +1340,9 @@ def build_products_menu_kb(
 
         # Format theo yêu cầu: "Tên | 15.000 vnđ | Số Lượng Còn : 5"
         price_text = fmt_price(p["price"]).replace(" đ", " vnđ")
-        label = f"{p['name']} | {price_text}|SL: {ready}"
+        remaining = p.get("remaining_days")
+        date_text = f"|Còn: {remaining} ngày" if p.get("is_time_priced") and str(remaining).isdigit() else ""
+        label = f"{p['name']} | {price_text}{date_text}|SL: {ready}"
 
         buttons.append([InlineKeyboardButton(label, callback_data=f"pdetail|{p['product_id']}")])
 
@@ -1240,6 +1377,7 @@ def product_detail_text(p: Dict[str, Any], ready_qty: int) -> str:
     return (
         f"📦 *{p['name']}*\n\n"
         f"💰 Giá: *{fmt_price(p['price'])}*\n"
+        f"{product_price_note(p)}\n"
         f"📦 Còn lại: *{ready_qty}*\n"
         f"📝 *Mô tả:*\n{desc}\n"
         f"📌 Trạng thái: {status}\n"
@@ -1249,7 +1387,7 @@ def product_detail_text(p: Dict[str, Any], ready_qty: int) -> str:
     )
 
 
-def product_detail_kb(pid: str, ready_qty: int) -> InlineKeyboardMarkup:
+def product_detail_kb(pid: str, ready_qty: int, current_price: int = 1) -> InlineKeyboardMarkup:
     rows = []
     if ready_qty > 0:
         rows.append([InlineKeyboardButton("🛒 Mua ngay", callback_data=f"buy|{pid}")])
@@ -1603,6 +1741,9 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     try:
         products = await gs_call(load_products_cached)
         stock_ready = await gs_call(stock_count_ready_by_code_cached)
+        fallback_prices = {p["stock_code"]: int(p["price"]) for p in products}
+        stock_prices = await gs_call(stock_price_preview_by_code, fallback_prices)
+        products = [{**p, **stock_prices.get(p["stock_code"], {})} for p in products]
     except Exception as e:
         logger.exception("show_products error")
         await context.bot.send_message(
@@ -1642,10 +1783,12 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     ready_map = await gs_call(stock_count_ready_by_code_cached)
     ready = ready_map.get(p["stock_code"], 0)
+    stock_prices = await gs_call(stock_price_preview_by_code, {p["stock_code"]: int(p["price"])})
+    p = {**p, **stock_prices.get(p["stock_code"], {})}
     await q.edit_message_text(
         product_detail_text(p, ready),
         parse_mode="Markdown",
-        reply_markup=product_detail_kb(pid, ready),
+        reply_markup=product_detail_kb(pid, ready, int(p["price"])),
     )
 
 async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str):
@@ -1805,13 +1948,16 @@ async def countdown_job(context: ContextTypes.DEFAULT_TYPE):
     p = await gs_call(find_product_by_stock_code, order.get("stock_code", ""))
     if not p:
         return
+    order_qty = normalize_int(order.get("qty"), 1)
+    order_total = normalize_int(order.get("total"), 0)
+    order_unit_price = order_total // order_qty if order_qty > 0 else int(p["price"])
 
     caption = build_checkout_caption_with_countdown(
         order_id=order_id,
         product_name=p["name"],
-        unit_price=int(p["price"]),
-        qty=normalize_int(order.get("qty"), 1),
-        total=normalize_int(order.get("total"), 0),
+        unit_price=order_unit_price,
+        qty=order_qty,
+        total=order_total,
         remain_seconds=remain,
         status_line="⏳ *ĐANG CHỜ THANH TOÁN*",
     )
@@ -1936,27 +2082,13 @@ async def checkout_flow(
         return False
 
     order_id = generate_order_id()
-    total = int(product["price"]) * qty
     created_at = now_str()
-    qr_url = build_vietqr_image_url(order_id, total)
-
-    # ✅ cho user thấy bot đang làm việc
-    try:
-        await context.bot.send_chat_action(chat_id=user_id, action=ChatAction.UPLOAD_PHOTO)
-    except Exception:
-        pass
-
-    # ✅ tải QR song song (giảm timeout để khỏi đứng lâu)
-    qr_task = asyncio.create_task(fetch_qr_bytes(qr_url, timeout=6))
-
     # ✅ giữ kho chạy trong thread
     reserved_items = await gs_call(
         reserve_items_from_pool,
-        product["stock_code"], qty, order_id, ORDER_TTL_SECONDS
+        product["stock_code"], qty, order_id, ORDER_TTL_SECONDS, int(product["price"])
     )
     if len(reserved_items) < qty:
-        if not qr_task.done():
-            qr_task.cancel()
         msg = "❌ Không thể giữ kho (POOL). Vui lòng nhập lại số lượng hoặc thử lại."
         if from_custom_qty:
             await _ask_retry(msg)
@@ -1969,6 +2101,31 @@ async def checkout_flow(
         else:
             await context.bot.send_message(chat_id=user_id, text=msg, reply_markup=main_menu_keyboard())
         return False
+
+    total = sum(normalize_int(item.get("price"), int(product["price"])) for item in reserved_items)
+    unit_price = round(total / qty) if qty > 0 else int(product["price"])
+    price_notes = []
+    first_item = reserved_items[0] if reserved_items else {}
+    if first_item.get("is_time_priced"):
+        price_notes.append(price_note_from_values(
+            normalize_int(first_item.get("base_price"), int(product["price"])),
+            normalize_int(first_item.get("duration_days"), 0),
+            first_item.get("remaining_days"),
+            str(first_item.get("expires_at") or ""),
+        ))
+    if qty > 1 and len({normalize_int(item.get("price"), 0) for item in reserved_items}) > 1:
+        price_notes.append("Đơn có nhiều item khác hạn, tổng tiền được cộng theo giá từng item.")
+    price_note = " ".join(note for note in price_notes if note)
+    qr_url = build_vietqr_image_url(order_id, total)
+
+    # ✅ cho user thấy bot đang làm việc
+    try:
+        await context.bot.send_chat_action(chat_id=user_id, action=ChatAction.UPLOAD_PHOTO)
+    except Exception:
+        pass
+
+    # ✅ tải QR song song (giảm timeout để khỏi đứng lâu)
+    qr_task = asyncio.create_task(fetch_qr_bytes(qr_url, timeout=6))
 
     # ✅ lưu order trong thread
     await gs_call(append_order, {
@@ -1995,11 +2152,12 @@ async def checkout_flow(
     caption = build_checkout_caption_with_countdown(
         order_id=order_id,
         product_name=product["name"],
-        unit_price=int(product["price"]),
+        unit_price=unit_price,
         qty=qty,
         total=total,
         remain_seconds=ORDER_TTL_SECONDS,
         status_line="⏳ *ĐANG CHỜ THANH TOÁN*",
+        price_note=price_note or product_price_note(product),
     )
 
     # ✅ lấy qr bytes (nếu fail -> None)
