@@ -359,6 +359,9 @@ def get_order_by_id(order_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[i
                 "stock_code": get_cell(row, "stock_code"),
                 "qty": safe_int(get_cell(row, "qty")) or 1,
                 "total": safe_int(get_cell(row, "total")),
+                "subtotal": safe_int(get_cell(row, "subtotal")),
+                "promo_code": get_cell(row, "promo_code"),
+                "promo_discount": safe_int(get_cell(row, "promo_discount")),
                 "status": get_cell(row, "status"),
                 "created_at": get_cell(row, "created_at"),
                 "qr_msg_id": get_cell(row, "qr_msg_id"),
@@ -706,39 +709,10 @@ async def process_payment(payload: Dict[str, Any]) -> None:
 
     created_at = (order.get("created_at") or "").strip()
 
-    # ✅ Nếu quá 10 phút mà vẫn PENDING -> EXPIRED + trả kho + xoá QR (best effort)
+    # Nếu webhook ngân hàng tới trễ hơn TTL, vẫn tiếp tục xử lý thanh toán.
+    # Nếu item còn HELD thì giao; nếu đã bị trả kho, nhánh POOL_EMPTY bên dưới sẽ báo admin xử lý.
     if status == "PENDING" and created_at and is_expired(created_at):
-        logger.info("AUTO EXPIRE order=%s created_at=%s ttl=%ss", canonical_oid, created_at, ORDER_TTL_SECONDS)
-
-        released = await gs_call(release_hold_by_order, canonical_oid, "EXPIRED")
-
-        # cập nhật order thành EXPIRED
-        await gs_call(update_order_cells, rownum, {
-            "status": "EXPIRED",
-            "deliver_text": f"(AUTO_EXPIRED_{ORDER_TTL_SECONDS}s)",
-            "delivered_at": "",
-        })
-
-        # best-effort xoá QR
-        user_id_s = (order.get("user_id") or "").strip()
-        qr_msg_id_s = (order.get("qr_msg_id") or "").strip()
-        if tg_bot and user_id_s.isdigit() and qr_msg_id_s.isdigit():
-            try:
-                await tg_bot.delete_message(chat_id=int(user_id_s), message_id=int(qr_msg_id_s))
-            except Exception:
-                pass
-
-        # ✅ Background notification - không đợi
-        asyncio.create_task(notify_admins(
-            "⚠️ Có thanh toán nhưng đơn đã quá hạn\n"
-            f"Order: {canonical_oid}\n"
-            f"Khách: {user_id_s}\n"
-            f"Số tiền: {money_vnd(amount)}\n"
-            f"TX: {txn_id}\n"
-            f"Đã trả kho: {released} item\n"
-            f"TTL: {ORDER_TTL_SECONDS // 60} phút"
-        ))
-        return
+        logger.warning("PAYMENT_AFTER_TTL | order=%s created_at=%s ttl=%ss", canonical_oid, created_at, ORDER_TTL_SECONDS)
 
     # ✅ FIX: chặn webhook retry / duplicate
     existing_tx = (order.get("tx_id") or "").strip()
@@ -764,24 +738,37 @@ async def process_payment(payload: Dict[str, Any]) -> None:
         return
     user_id = int(user_id_s)
 
-    # ✅ FIX #2: Add tolerance for amount validation (allow ±500 VND for rounding)
+    # ✅ Allow overpayment. Only block underpayment below tolerance.
     AMOUNT_TOLERANCE = 500
     if CHECK_AMOUNT and total_need:
-        amount_diff = abs(amount - total_need)
-        if amount_diff > AMOUNT_TOLERANCE:
-            logger.warning("Amount mismatch for %s: got=%s need=%s diff=%s", canonical_oid, amount, total_need, amount_diff)
+        underpaid = total_need - amount
+        overpaid = amount - total_need
+        if underpaid > AMOUNT_TOLERANCE:
+            logger.warning("Amount underpaid for %s: got=%s need=%s diff=%s", canonical_oid, amount, total_need, underpaid)
             # ✅ Background notification - không đợi
             asyncio.create_task(notify_admins(
-                "⚠️ Có giao dịch sai số tiền\n"
+                "⚠️ Có giao dịch thiếu số tiền\n"
                 f"Order: {canonical_oid}\n"
                 f"Khách: {user_id}\n"
                 f"Stock: {stock_code}\n"
                 f"Cần: {money_vnd(total_need)}\n"
                 f"Nhận: {money_vnd(amount)}\n"
-                f"Chênh: {money_vnd(amount_diff)} (Tolerance: {money_vnd(AMOUNT_TOLERANCE)})\n"
+                f"Thiếu: {money_vnd(underpaid)} (Tolerance: {money_vnd(AMOUNT_TOLERANCE)})\n"
                 f"TX: {txn_id}"
             ))
             return
+        if overpaid > AMOUNT_TOLERANCE:
+            logger.warning("Amount overpaid for %s: got=%s need=%s diff=%s", canonical_oid, amount, total_need, overpaid)
+            asyncio.create_task(notify_admins(
+                "ℹ️ Khách chuyển dư, hệ thống vẫn giao hàng\n"
+                f"Order: {canonical_oid}\n"
+                f"Khách: {user_id}\n"
+                f"Stock: {stock_code}\n"
+                f"Cần: {money_vnd(total_need)}\n"
+                f"Nhận: {money_vnd(amount)}\n"
+                f"Dư: {money_vnd(overpaid)}\n"
+                f"TX: {txn_id}"
+            ))
 
     # 2) mark PAID (chỉ update rownum)
     paid_at = now_str()
@@ -839,28 +826,6 @@ async def process_payment(payload: Dict[str, Any]) -> None:
 
     await gs_call(update_order_cells, rownum, {"status": "DELIVERED", "delivered_at": delivered_at, "deliver_text": deliver_text_plain})
 
-    try:
-        import bot_shop as shop
-        promo_code = str(order.get("promo_code") or "").strip()
-        if promo_code:
-            await shop.gs_call(shop.mark_promo_award_used, user_id, promo_code, canonical_oid)
-        awarded_promos = await shop.gs_call(shop.award_promotions_for_user, user_id)
-        if tg_bot:
-            for award in awarded_promos:
-                await tg_bot.send_message(
-                    chat_id=user_id,
-                    text=(
-                        "🎁 *Bạn vừa nhận mã khuyến mãi!*\n\n"
-                        f"Mã: `{award.get('code')}`\n"
-                        f"Giảm: *{award.get('discount_percent')}%* cho đơn tiếp theo\n"
-                        f"Hạn dùng: `{award.get('expires_at')}`\n\n"
-                        "Đơn sau bot sẽ tự áp mã còn hiệu lực cho bạn."
-                    ),
-                    parse_mode=ParseMode.MARKDOWN,
-                )
-    except Exception as exc:
-        logger.warning("promo award handling failed order=%s: %s", canonical_oid, exc)
-
 
     # 5) write fulfillments (optional) - dùng canonical_oid
     try:
@@ -875,6 +840,31 @@ async def process_payment(payload: Dict[str, Any]) -> None:
     except Exception as e:
         logger.exception("send_delivery_message crashed: %s", e)
         sent_ok = False
+
+    async def promo_after_delivery() -> None:
+        try:
+            import bot_shop as shop
+            promo_code = str(order.get("promo_code") or "").strip()
+            if promo_code:
+                await shop.gs_call(shop.mark_promo_award_used, user_id, promo_code, canonical_oid)
+            awarded_promos = await shop.gs_call(shop.award_promotions_for_user, user_id)
+            if tg_bot:
+                for award in awarded_promos:
+                    await tg_bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            "🎁 *Bạn vừa nhận mã khuyến mãi!*\n\n"
+                            f"Mã: `{award.get('code')}`\n"
+                            f"Giảm: *{award.get('discount_percent')}%* cho đơn tiếp theo\n"
+                            f"Hạn dùng: `{award.get('expires_at')}`\n\n"
+                            "Đơn sau bot sẽ tự áp mã còn hiệu lực cho bạn."
+                        ),
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+        except Exception as exc:
+            logger.warning("promo award handling failed order=%s: %s", canonical_oid, exc)
+
+    asyncio.create_task(promo_after_delivery())
 
     # 7) nếu gửi OK thì xoá QR; nếu không thì chỉ edit lại caption
     if qr_msg_id_s.isdigit() and tg_bot:
