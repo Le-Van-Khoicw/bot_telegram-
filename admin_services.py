@@ -639,6 +639,20 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "promotion": payload, "items": shop.load_promotions()}
 
 
+def save_promo_settings(data: Dict[str, Any]) -> Dict[str, Any]:
+    ws = shop.promo_settings_ws()
+    headers = _headers(ws)
+    rows = [
+        {"key": "menu_enabled", "value": "TRUE" if shop.normalize_bool(data.get("menu_enabled"), False) else "FALSE", "updated_at": shop.now_str()},
+        {"key": "menu_text", "value": str(data.get("menu_text") or ""), "updated_at": shop.now_str()},
+    ]
+    payload = [shop.PROMO_SETTINGS_HEADERS]
+    for row in rows:
+        payload.append([str(row.get(h) or "") for h in shop.PROMO_SETTINGS_HEADERS])
+    ws.update(f"A1:C{len(payload)}", payload, value_input_option="USER_ENTERED")
+    return {"ok": True, "settings": shop.load_promo_settings()}
+
+
 def load_promotion_awards() -> List[Dict[str, str]]:
     rows = shop.get_all_records(shop.promo_awards_ws())
     rows.sort(key=lambda x: x.get("awarded_at") or "", reverse=True)
@@ -772,6 +786,7 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
         "expenses": expenses[:limit],
         "promotions": shop.load_promotions(),
         "promo_awards": load_promotion_awards()[:limit],
+        "promo_settings": shop.load_promo_settings(),
     }
     if include_materials:
         result["materials"] = materials[:pool_limit]

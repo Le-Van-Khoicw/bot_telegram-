@@ -68,6 +68,7 @@ TAB_USERS = os.getenv("USERS_TAB", "USERS").strip()
 TAB_FUL = os.getenv("FULFILLMENTS_TAB", "FULFILLMENTS").strip()
 PROMOTIONS_TAB = os.getenv("PROMOTIONS_TAB", "PROMOTIONS").strip()
 PROMO_AWARDS_TAB = os.getenv("PROMO_AWARDS_TAB", "PROMO_AWARDS").strip()
+PROMO_SETTINGS_TAB = os.getenv("PROMO_SETTINGS_TAB", "PROMO_SETTINGS").strip()
 _ws_users = None
 
 def parse_admin_ids(raw: str) -> set[int]:
@@ -119,6 +120,7 @@ SESSION_EXPIRY_SECONDS = 600  # 10 minutes
 CHECKOUT_IN_PROGRESS: set[int] = set()
 PROMOTION_HEADERS = ["id", "code", "discount_percent", "required_orders", "expires_days", "status", "note", "created_at", "updated_at"]
 PROMO_AWARD_HEADERS = ["user_id", "promo_id", "code", "discount_percent", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
+PROMO_SETTINGS_HEADERS = ["key", "value", "updated_at"]
 
 
 BANK_CODE_ALIASES = {
@@ -687,6 +689,22 @@ def promotions_ws():
 
 def promo_awards_ws():
     return ensure_worksheet(PROMO_AWARDS_TAB, PROMO_AWARD_HEADERS)
+
+def promo_settings_ws():
+    return ensure_worksheet(PROMO_SETTINGS_TAB, PROMO_SETTINGS_HEADERS)
+
+def load_promo_settings() -> Dict[str, str]:
+    settings = {str(row.get("key") or "").strip(): str(row.get("value") or "") for row in get_all_records(promo_settings_ws())}
+    return {
+        "menu_enabled": settings.get("menu_enabled", "FALSE"),
+        "menu_text": settings.get("menu_text", ""),
+    }
+
+def menu_promo_text() -> str:
+    settings = load_promo_settings()
+    if not normalize_bool(settings.get("menu_enabled"), False):
+        return ""
+    return str(settings.get("menu_text") or "").strip()
 
 def load_promotions() -> List[Dict[str, str]]:
     rows = get_all_records(promotions_ws())
@@ -1961,6 +1979,7 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         products = await gs_call(load_products_cached)
         stock_ready = await gs_call(stock_count_ready_by_code_cached)
         stock_prices = await gs_call(stock_price_preview_for_products, products)
+        promo_text = await gs_call(menu_promo_text)
         products = [{**p, **stock_prices.get(p["product_id"], {})} for p in products]
     except Exception as e:
         logger.exception("show_products error")
@@ -1979,9 +1998,11 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    promo_block = f"\n\n🎁 *Khuyến mãi:*\n{promo_text}" if promo_text else ""
     text = (
         "🛍 *MENU SẢN PHẨM*\n\n"
         "👉 Chọn sản phẩm bên dưới:"
+        f"{promo_block}"
     )
 
     await context.bot.send_message(

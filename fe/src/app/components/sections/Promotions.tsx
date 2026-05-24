@@ -8,7 +8,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
+import { Textarea } from "../ui/textarea";
 import { adminApi, text, type AdminSnapshot, type AnyRow } from "../../api";
 
 interface Props {
@@ -22,10 +24,18 @@ const EMPTY = { id: "", code: "", discount_percent: "10", required_orders: "10",
 export function Promotions({ data, adminKey, refresh }: Props) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ ...EMPTY });
+  const settings = data?.promo_settings || {};
+  const [menuEnabled, setMenuEnabled] = useState(String(settings.menu_enabled || "").toUpperCase() === "TRUE");
+  const [menuText, setMenuText] = useState(String(settings.menu_text || ""));
   const [saving, setSaving] = useState(false);
 
   const promotions = data?.promotions || [];
   const awards = data?.promo_awards || [];
+
+  const syncSettings = () => {
+    setMenuEnabled(String(settings.menu_enabled || "").toUpperCase() === "TRUE");
+    setMenuText(String(settings.menu_text || ""));
+  };
 
   const openAdd = () => {
     setForm({ ...EMPTY });
@@ -57,12 +67,51 @@ export function Promotions({ data, adminKey, refresh }: Props) {
     }
   };
 
+  const saveSettings = async () => {
+    setSaving(true);
+    try {
+      await adminApi("/admin/api/promo-settings", adminKey, {
+        method: "POST",
+        body: JSON.stringify({ menu_enabled: menuEnabled, menu_text: menuText }),
+      });
+      toast.success("Đã lưu thông báo menu");
+      await refresh();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
         <h2 className="flex items-center gap-2"><Gift size={20} /> Khuyến mãi</h2>
         <Button size="sm" className="gap-1.5" onClick={openAdd}><Plus size={15} /> Thêm mã</Button>
       </div>
+
+      <Card className="shadow-sm">
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="font-semibold">Thông báo khuyến mãi trong menu bot</h3>
+              <p className="text-xs text-muted-foreground">Nội dung này sẽ hiện trong /shop khi bật.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="promo-menu-enabled">Hiển thị</Label>
+              <Switch id="promo-menu-enabled" checked={menuEnabled} onCheckedChange={setMenuEnabled} />
+            </div>
+          </div>
+          <Textarea
+            className="min-h-24"
+            value={menuText}
+            onChange={(event) => setMenuText(event.target.value)}
+            placeholder="Ví dụ: Mua đủ 10 đơn bất kỳ nhận mã giảm giá cho đơn tiếp theo. Nếu có mã còn hiệu lực, bot sẽ tự áp khi tạo đơn."
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={syncSettings}>Hoàn tác</Button>
+            <Button onClick={saveSettings} disabled={saving}>Lưu thông báo</Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="shadow-sm">
         <CardContent className="p-0 overflow-x-auto">
