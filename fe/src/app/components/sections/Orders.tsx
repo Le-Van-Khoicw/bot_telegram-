@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ClipboardList, DollarSign, Plus, Search, ShoppingCart, Trash2 } from "lucide-react";
+import { ArrowLeft, CalendarDays, ClipboardList, DollarSign, Plus, Search, ShoppingCart, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Calendar } from "../ui/calendar";
 import { Card, CardContent } from "../ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../api";
@@ -15,7 +17,7 @@ type OrderStatus = "PENDING" | "PAID" | "DELIVERED" | "EXPIRED" | "CANCELLED";
 type OrderFilter = OrderStatus | "ALL" | "FAILED";
 type GptMark = { value: string; status?: string; note?: string };
 type OrderView = "orders" | "revenue";
-type RevenuePeriod = "day" | "seven" | "week" | "month" | "year";
+type RevenuePeriod = "day" | "custom" | "seven" | "week" | "month" | "year";
 
 interface Props {
   data: AdminSnapshot | null;
@@ -52,13 +54,20 @@ function parseVnDateKey(key: string) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function periodRange(period: RevenuePeriod) {
+function dateToVnKey(date: Date) {
+  return date.toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+}
+
+function periodRange(period: RevenuePeriod, selectedDateKey = "") {
   const todayKey = vnDay(0);
-  const start = parseVnDateKey(todayKey) || new Date();
+  const baseKey = period === "custom" && selectedDateKey ? selectedDateKey : todayKey;
+  const start = parseVnDateKey(baseKey) || new Date();
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
 
-  if (period === "seven") {
+  if (period === "custom") {
+    // Keep the one-day range from the chosen date.
+  } else if (period === "seven") {
     start.setDate(start.getDate() - 6);
   } else if (period === "week") {
     const day = start.getDay() || 7;
@@ -72,16 +81,17 @@ function periodRange(period: RevenuePeriod) {
   return { start, end };
 }
 
-function isInPeriod(value: any, period: RevenuePeriod) {
+function isInPeriod(value: any, period: RevenuePeriod, selectedDateKey = "") {
   const key = dateKey(value);
   const date = parseVnDateKey(key);
   if (!date) return false;
-  const { start, end } = periodRange(period);
+  const { start, end } = periodRange(period, selectedDateKey);
   return date >= start && date < end;
 }
 
-function periodLabel(period: RevenuePeriod) {
+function periodLabel(period: RevenuePeriod, selectedDateKey = "") {
   if (period === "day") return "hôm nay";
+  if (period === "custom") return selectedDateKey || "ngày đã chọn";
   if (period === "seven") return "7 ngày gần nhất";
   if (period === "week") return "tuần này";
   if (period === "month") return "tháng này";
@@ -95,6 +105,7 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
   const [filterDateField, setFilterDateField] = useState<"created_at" | "delivered_at">("created_at");
   const [view, setView] = useState<OrderView>("orders");
   const [revenuePeriod, setRevenuePeriod] = useState<RevenuePeriod>("day");
+  const [revenueDateKey, setRevenueDateKey] = useState(vnDay(0));
   const [expenseForm, setExpenseForm] = useState({ name: "", amount: "", date: vnDay(0), note: "" });
   const [changeModal, setChangeModal] = useState<{ open: boolean; order: AnyRow | null }>({ open: false, order: null });
   const [newStatus, setNewStatus] = useState<OrderStatus>("DELIVERED");
@@ -181,10 +192,10 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
     .reduce((sum, order) => sum + Number(order.total || 0), 0);
   const revenueOrders = orders.filter((order) => {
     if (text(order.status).toUpperCase() !== "DELIVERED") return false;
-    return isInPeriod(order.delivered_at || order.paid_at || order.created_at, revenuePeriod);
+    return isInPeriod(order.delivered_at || order.paid_at || order.created_at, revenuePeriod, revenueDateKey);
   });
   const selectedRevenue = revenueOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
-  const periodExpenses = (data?.expenses || []).filter((expense) => isInPeriod(expense.date || expense.created_at, revenuePeriod));
+  const periodExpenses = (data?.expenses || []).filter((expense) => isInPeriod(expense.date || expense.created_at, revenuePeriod, revenueDateKey));
   const selectedExpense = periodExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
   const selectedProfit = selectedRevenue - selectedExpense;
   const expenseGroups = useMemo(() => {
@@ -207,7 +218,7 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
     const status = text(order.status).toUpperCase();
     if (view === "revenue") {
       if (status !== "DELIVERED") return false;
-      if (!isInPeriod(order.delivered_at || order.paid_at || order.created_at, revenuePeriod)) return false;
+      if (!isInPeriod(order.delivered_at || order.paid_at || order.created_at, revenuePeriod, revenueDateKey)) return false;
     } else if (filterStatus === "FAILED" && !["EXPIRED", "CANCELLED"].includes(status)) return false;
     if (filterStatus !== "ALL" && filterStatus !== "FAILED" && status !== filterStatus) return false;
     if (filterDateKey) {
@@ -245,6 +256,12 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
   const applyDayFilter = (key: string) => {
     setFilterDateKey(key);
     setFilterDateField("created_at");
+  };
+
+  const applyRevenueDate = (date?: Date) => {
+    if (!date) return;
+    setRevenueDateKey(dateToVnKey(date));
+    setRevenuePeriod("custom");
   };
 
   const addExpense = async () => {
@@ -295,7 +312,7 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
         <Card className="shadow-sm">
           <CardContent className="flex items-center justify-between p-4">
             <div>
-              <p className="text-xs text-muted-foreground">{view === "revenue" ? `Doanh thu ${periodLabel(revenuePeriod)}` : "Doanh thu hôm nay"}</p>
+              <p className="text-xs text-muted-foreground">{view === "revenue" ? `Doanh thu ${periodLabel(revenuePeriod, revenueDateKey)}` : "Doanh thu hôm nay"}</p>
               <p className="mt-2 text-lg font-semibold text-emerald-700">{money(view === "revenue" ? selectedRevenue : todayRevenue)}</p>
               {view === "revenue" ? <p className="text-xs text-muted-foreground">{revenueOrders.length} đơn đã giao</p> : null}
             </div>
@@ -318,6 +335,7 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
           <div className="flex flex-wrap gap-2">
             {([
               ["day", "Hôm nay"],
+              ["custom", revenueDateKey],
               ["seven", "7 ngày"],
               ["week", "Tuần"],
               ["month", "Tháng"],
@@ -328,11 +346,31 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
                 variant={revenuePeriod === period ? "default" : "outline"}
                 size="sm"
                 className="h-10"
-                onClick={() => setRevenuePeriod(period)}
+                onClick={() => {
+                  if (period === "custom") {
+                    setRevenueDateKey(revenueDateKey || todayKey);
+                  }
+                  setRevenuePeriod(period);
+                }}
               >
+                {period === "custom" ? <CalendarDays size={15} /> : null}
                 {label}
               </Button>
             ))}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="h-10 gap-2">
+                  <CalendarDays size={15} /> Chọn ngày
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-auto p-0">
+                <Calendar
+                  mode="single"
+                  selected={parseVnDateKey(revenueDateKey) || undefined}
+                  onSelect={applyRevenueDate}
+                />
+              </PopoverContent>
+            </Popover>
             <Button
               variant="secondary"
               size="sm"
@@ -350,14 +388,14 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
           <div className="grid gap-3 md:grid-cols-3">
             <Card className="shadow-sm">
               <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">Chi phí {periodLabel(revenuePeriod)}</p>
+                <p className="text-xs text-muted-foreground">Chi phí {periodLabel(revenuePeriod, revenueDateKey)}</p>
                 <p className="mt-2 text-lg font-semibold text-red-600">{money(selectedExpense)}</p>
                 <p className="text-xs text-muted-foreground">{periodExpenses.length} khoản chi</p>
               </CardContent>
             </Card>
             <Card className="shadow-sm">
               <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">Lợi nhuận {periodLabel(revenuePeriod)}</p>
+                <p className="text-xs text-muted-foreground">Lợi nhuận {periodLabel(revenuePeriod, revenueDateKey)}</p>
                 <p className={`mt-2 text-lg font-semibold ${selectedProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>{money(selectedProfit)}</p>
                 <p className="text-xs text-muted-foreground">Doanh thu - chi phí</p>
               </CardContent>
