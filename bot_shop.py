@@ -66,6 +66,8 @@ TAB_POOL = os.getenv("POOL_TAB", "POOL").strip()
 TAB_RES = os.getenv("RESERVATIONS_TAB", "RESERVATIONS").strip()
 TAB_USERS = os.getenv("USERS_TAB", "USERS").strip()
 TAB_FUL = os.getenv("FULFILLMENTS_TAB", "FULFILLMENTS").strip()
+PROMOTIONS_TAB = os.getenv("PROMOTIONS_TAB", "PROMOTIONS").strip()
+PROMO_AWARDS_TAB = os.getenv("PROMO_AWARDS_TAB", "PROMO_AWARDS").strip()
 _ws_users = None
 
 def parse_admin_ids(raw: str) -> set[int]:
@@ -115,6 +117,8 @@ PENDING_QTY: Dict[int, Dict[str, Any]] = {}  # user_id -> {"product_id": ...}
 SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}
 SESSION_EXPIRY_SECONDS = 600  # 10 minutes
 CHECKOUT_IN_PROGRESS: set[int] = set()
+PROMOTION_HEADERS = ["id", "code", "discount_percent", "required_orders", "expires_days", "status", "note", "created_at", "updated_at"]
+PROMO_AWARD_HEADERS = ["user_id", "promo_id", "code", "discount_percent", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
 
 
 BANK_CODE_ALIASES = {
@@ -660,6 +664,137 @@ def get_all_records(ws) -> List[Dict[str, str]]:
         rows.append(d)
     return rows
 
+def ensure_worksheet(title: str, headers: List[str]):
+    init_sheets()
+    try:
+        ws = _gs_sheet.worksheet(title)
+    except Exception:
+        ws = _gs_sheet.add_worksheet(title=title, rows=1000, cols=len(headers))
+        ws.update(f"A1:{chr(64 + len(headers))}1", [headers], value_input_option="USER_ENTERED")
+        return ws
+    current = [str(h).strip() for h in ws.row_values(1)]
+    cells: List[Cell] = []
+    for key in headers:
+        if key not in current:
+            current.append(key)
+            cells.append(Cell(1, len(current), key))
+    if cells:
+        ws.update_cells(cells, value_input_option="USER_ENTERED")
+    return ws
+
+def promotions_ws():
+    return ensure_worksheet(PROMOTIONS_TAB, PROMOTION_HEADERS)
+
+def promo_awards_ws():
+    return ensure_worksheet(PROMO_AWARDS_TAB, PROMO_AWARD_HEADERS)
+
+def load_promotions() -> List[Dict[str, str]]:
+    rows = get_all_records(promotions_ws())
+    rows.sort(key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True)
+    return rows
+
+def active_promotions() -> List[Dict[str, str]]:
+    return [p for p in load_promotions() if str(p.get("status") or "ACTIVE").strip().upper() == "ACTIVE"]
+
+def count_delivered_orders_for_user(user_id: int) -> int:
+    init_sheets()
+    count = 0
+    for order in get_all_records(_ws_orders):
+        if str(order.get("user_id") or "").strip() != str(user_id):
+            continue
+        if str(order.get("status") or "").strip().upper() == "DELIVERED":
+            count += 1
+    return count
+
+def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
+    ws = promo_awards_ws()
+    existing = get_all_records(ws)
+    delivered_count = count_delivered_orders_for_user(user_id)
+    now = now_str()
+    awarded: List[Dict[str, str]] = []
+    existing_keys = {
+        (str(row.get("user_id") or "").strip(), str(row.get("promo_id") or "").strip())
+        for row in existing
+    }
+    headers = headers_map(ws)
+    rows_to_append = []
+    for promo in active_promotions():
+        promo_id = str(promo.get("id") or "").strip()
+        code_base = str(promo.get("code") or "").strip().upper()
+        required = normalize_int(promo.get("required_orders"), 0)
+        discount = normalize_int(promo.get("discount_percent"), 0)
+        if not promo_id or not code_base or required <= 0 or discount <= 0:
+            continue
+        if delivered_count < required or (str(user_id), promo_id) in existing_keys:
+            continue
+        expires_days = normalize_int(promo.get("expires_days"), 7)
+        expires_at = (now_dt() + timedelta(days=max(1, expires_days))).strftime("%Y-%m-%d %H:%M:%S")
+        code = f"{code_base}{str(user_id)[-4:]}"
+        award = {
+            "user_id": str(user_id),
+            "promo_id": promo_id,
+            "code": code,
+            "discount_percent": str(discount),
+            "status": "ACTIVE",
+            "awarded_at": now,
+            "expires_at": expires_at,
+            "used_order_id": "",
+            "used_at": "",
+        }
+        row = [""] * len(headers)
+        for key, value in award.items():
+            col = headers.get(key.lower())
+            if col:
+                row[col - 1] = value
+        rows_to_append.append(row)
+        awarded.append(award)
+    if rows_to_append:
+        ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
+    return awarded
+
+def best_available_promo_award(user_id: int) -> Optional[Dict[str, str]]:
+    now = now_dt()
+    candidates = []
+    for row in get_all_records(promo_awards_ws()):
+        if str(row.get("user_id") or "").strip() != str(user_id):
+            continue
+        if str(row.get("status") or "").strip().upper() != "ACTIVE":
+            continue
+        exp = parse_dt(str(row.get("expires_at") or ""))
+        if exp and exp < now:
+            continue
+        candidates.append(row)
+    candidates.sort(key=lambda x: normalize_int(x.get("discount_percent"), 0), reverse=True)
+    return candidates[0] if candidates else None
+
+def mark_promo_award_used(user_id: int, code: str, order_id: str) -> None:
+    ws = promo_awards_ws()
+    values = ws.get_all_values()
+    if len(values) < 2:
+        return
+    h = {str(v).strip().lower(): i for i, v in enumerate(values[0], start=1)}
+    c_user = h.get("user_id")
+    c_code = h.get("code")
+    c_status = h.get("status")
+    c_order = h.get("used_order_id")
+    c_used = h.get("used_at")
+    if not (c_user and c_code and c_status):
+        return
+    cells: List[Cell] = []
+    for rownum, row in enumerate(values[1:], start=2):
+        uid = row[c_user - 1].strip() if c_user - 1 < len(row) else ""
+        row_code = row[c_code - 1].strip() if c_code - 1 < len(row) else ""
+        status = row[c_status - 1].strip().upper() if c_status - 1 < len(row) else ""
+        if uid == str(user_id) and row_code.upper() == code.upper() and status == "ACTIVE":
+            cells.append(Cell(rownum, c_status, "USED"))
+            if c_order:
+                cells.append(Cell(rownum, c_order, order_id))
+            if c_used:
+                cells.append(Cell(rownum, c_used, now_str()))
+            break
+    if cells:
+        ws.update_cells(cells, value_input_option="USER_ENTERED")
+
 # ================== PRODUCTS + STOCK ==================
 def load_products() -> List[Dict[str, Any]]:
     init_sheets()
@@ -1074,6 +1209,15 @@ def append_order(order_row: Dict[str, Any]) -> None:
     h = headers_map(_ws_orders)
     if not h:
         raise RuntimeError("ORDERS thiếu header row")
+    extra_headers = ["subtotal", "promo_code", "promo_discount"]
+    cells: List[Cell] = []
+    for key in extra_headers:
+        if key not in h:
+            col = len(h) + 1
+            h[key] = col
+            cells.append(Cell(1, col, key))
+    if cells:
+        _ws_orders.update_cells(cells, value_input_option="USER_ENTERED")
 
     row_values = [""] * len(h)
 
@@ -1087,6 +1231,9 @@ def append_order(order_row: Dict[str, Any]) -> None:
     put("stock_code", order_row.get("stock_code", ""))
     put("qty", order_row.get("qty", ""))
     put("total", order_row.get("total", ""))
+    put("subtotal", order_row.get("subtotal", ""))
+    put("promo_code", order_row.get("promo_code", ""))
+    put("promo_discount", order_row.get("promo_discount", ""))
     put("status", order_row.get("status", "PENDING"))
     put("qr_msg_id", order_row.get("qr_msg_id", ""))
     put("paid_at", order_row.get("paid_at", ""))
@@ -1985,6 +2132,24 @@ async def qty_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: st
     finally:
         CHECKOUT_IN_PROGRESS.discard(user_id)
 
+async def send_awarded_promos(context: ContextTypes.DEFAULT_TYPE, user_id: int, awards: List[Dict[str, str]]) -> None:
+    for award in awards:
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🎁 *Bạn vừa nhận mã khuyến mãi!*\n\n"
+                    f"Mã: `{award.get('code')}`\n"
+                    f"Giảm: *{award.get('discount_percent')}%* cho đơn tiếp theo\n"
+                    f"Hạn dùng: `{award.get('expires_at')}`\n\n"
+                    "Đơn sau bot sẽ tự áp mã còn hiệu lực cho bạn."
+                ),
+                parse_mode="Markdown",
+                reply_markup=main_menu_keyboard(),
+            )
+        except Exception as exc:
+            logger.warning("send promo award failed user=%s: %s", user_id, exc)
+
 # ================== JOBS ==================
 def remove_jobs_by_prefix(app: Application, prefix: str):
     if not app.job_queue:
@@ -2177,8 +2342,13 @@ async def checkout_flow(
             await context.bot.send_message(chat_id=user_id, text=msg, reply_markup=main_menu_keyboard())
         return False
 
-    total = sum(normalize_int(item.get("price"), int(product["price"])) for item in reserved_items)
-    unit_price = round(total / qty) if qty > 0 else int(product["price"])
+    subtotal = sum(normalize_int(item.get("price"), int(product["price"])) for item in reserved_items)
+    promo_award = await gs_call(best_available_promo_award, user_id)
+    promo_code = str((promo_award or {}).get("code") or "")
+    promo_percent = normalize_int((promo_award or {}).get("discount_percent"), 0)
+    promo_discount = round(subtotal * promo_percent / 100) if promo_code and promo_percent > 0 else 0
+    total = max(0, subtotal - promo_discount)
+    unit_price = round(subtotal / qty) if qty > 0 else int(product["price"])
     price_notes = []
     first_item = reserved_items[0] if reserved_items else {}
     if first_item.get("is_time_priced"):
@@ -2190,6 +2360,8 @@ async def checkout_flow(
         ))
     if qty > 1 and len({normalize_int(item.get("price"), 0) for item in reserved_items}) > 1:
         price_notes.append("Đơn có nhiều item khác hạn, tổng tiền được cộng theo giá từng item.")
+    if promo_discount > 0:
+        price_notes.append(f"Đã tự áp mã {promo_code}: giảm {promo_percent}% (-{fmt_price(promo_discount)}).")
     price_note = " ".join(note for note in price_notes if note)
     qr_url = build_vietqr_image_url(order_id, total)
 
@@ -2209,6 +2381,9 @@ async def checkout_flow(
         "stock_code": product["stock_code"],
         "qty": qty,
         "total": total,
+        "subtotal": subtotal,
+        "promo_code": promo_code,
+        "promo_discount": promo_discount,
         "status": "PENDING",
         "qr_msg_id": "",
         "paid_at": "",
@@ -2521,6 +2696,10 @@ async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order
         "delivered_at": delivered_at,
         "deliver_text": deliver_text_plain
     })
+    promo_code = str(order.get("promo_code") or "").strip()
+    if promo_code:
+        await gs_call(mark_promo_award_used, q.from_user.id, promo_code, order_id)
+    awarded_promos = await gs_call(award_promotions_for_user, q.from_user.id)
 
     # stop countdown job
     remove_jobs_by_prefix(context.application, f"countdown_{order_id}")
@@ -2612,6 +2791,7 @@ async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order
             parse_mode="Markdown",
             reply_markup=main_menu_keyboard(),
         )
+        await send_awarded_promos(context, q.from_user.id, awarded_promos)
         return
 
     await context.bot.send_message(
@@ -2627,6 +2807,7 @@ async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order
         parse_mode=ParseMode.HTML,
         reply_markup=main_menu_keyboard(),
     )
+    await send_awarded_promos(context, q.from_user.id, awarded_promos)
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
     q = update.callback_query

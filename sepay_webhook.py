@@ -839,6 +839,28 @@ async def process_payment(payload: Dict[str, Any]) -> None:
 
     await gs_call(update_order_cells, rownum, {"status": "DELIVERED", "delivered_at": delivered_at, "deliver_text": deliver_text_plain})
 
+    try:
+        import bot_shop as shop
+        promo_code = str(order.get("promo_code") or "").strip()
+        if promo_code:
+            await shop.gs_call(shop.mark_promo_award_used, user_id, promo_code, canonical_oid)
+        awarded_promos = await shop.gs_call(shop.award_promotions_for_user, user_id)
+        if tg_bot:
+            for award in awarded_promos:
+                await tg_bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        "🎁 *Bạn vừa nhận mã khuyến mãi!*\n\n"
+                        f"Mã: `{award.get('code')}`\n"
+                        f"Giảm: *{award.get('discount_percent')}%* cho đơn tiếp theo\n"
+                        f"Hạn dùng: `{award.get('expires_at')}`\n\n"
+                        "Đơn sau bot sẽ tự áp mã còn hiệu lực cho bạn."
+                    ),
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+    except Exception as exc:
+        logger.warning("promo award handling failed order=%s: %s", canonical_oid, exc)
+
 
     # 5) write fulfillments (optional) - dùng canonical_oid
     try:

@@ -598,6 +598,53 @@ def delete_expense(expense_id: str) -> Dict[str, Any]:
     return {"ok": False, "deleted": "", "items": rows, "error": "Không tìm thấy khoản chi"}
 
 
+def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
+    ws = shop.promotions_ws()
+    headers = _headers(ws)
+    promo_id = str(data.get("id") or "").strip() or f"PROMO{shop.now_dt().strftime('%Y%m%d%H%M%S')}{random.randint(100, 999)}"
+    code = str(data.get("code") or "").strip().upper()
+    discount = max(1, min(shop.normalize_int(data.get("discount_percent"), 0), 100))
+    required = max(1, shop.normalize_int(data.get("required_orders"), 0))
+    expires_days = max(1, shop.normalize_int(data.get("expires_days"), 7))
+    status = str(data.get("status") or "ACTIVE").strip().upper()
+    if status not in ("ACTIVE", "PAUSED"):
+        status = "ACTIVE"
+    if not code:
+        raise ValueError("Thiếu mã khuyến mãi")
+    now = shop.now_str()
+    payload = {
+        "id": promo_id,
+        "code": code,
+        "discount_percent": discount,
+        "required_orders": required,
+        "expires_days": expires_days,
+        "status": status,
+        "note": str(data.get("note") or ""),
+        "created_at": str(data.get("created_at") or now),
+        "updated_at": now,
+    }
+    values = ws.get_all_values()
+    c_id = headers.get("id")
+    target_row = 0
+    for rownum, row in enumerate(values[1:], start=2):
+        current = row[c_id - 1].strip() if c_id and c_id - 1 < len(row) else ""
+        if current == promo_id:
+            target_row = rownum
+            break
+    row_values = _row_from_headers(headers, payload)
+    if target_row:
+        ws.update(f"A{target_row}:{chr(64 + len(headers))}{target_row}", [row_values], value_input_option="USER_ENTERED")
+    else:
+        ws.append_row(row_values, value_input_option="USER_ENTERED")
+    return {"ok": True, "promotion": payload, "items": shop.load_promotions()}
+
+
+def load_promotion_awards() -> List[Dict[str, str]]:
+    rows = shop.get_all_records(shop.promo_awards_ws())
+    rows.sort(key=lambda x: x.get("awarded_at") or "", reverse=True)
+    return rows
+
+
 def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool = False) -> Dict[str, Any]:
     shop.init_sheets()
     products = shop.load_products()
@@ -723,6 +770,8 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
         "fulfillments": fulfillments[:limit],
         "deliveries": delivery_rows[:limit],
         "expenses": expenses[:limit],
+        "promotions": shop.load_promotions(),
+        "promo_awards": load_promotion_awards()[:limit],
     }
     if include_materials:
         result["materials"] = materials[:pool_limit]
