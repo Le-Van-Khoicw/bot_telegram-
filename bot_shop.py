@@ -744,6 +744,48 @@ def stock_price_preview_by_code(
             preview_order[stock_code] = key
     return previews
 
+def stock_price_preview_for_products(products: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    init_sheets()
+    rows = _ws_pool.get_all_values()
+    if not rows or len(rows) < 2:
+        return {}
+    headers = {str(h).strip().lower(): i for i, h in enumerate(rows[0], start=1)}
+    c_stock = headers.get("stock_code")
+    c_status = headers.get("status")
+    if not (c_stock and c_status):
+        return {}
+
+    ready_rows: Dict[str, List[Tuple[int, List[str]]]] = {}
+    for rownum, row in enumerate(rows[1:], start=2):
+        stock_code = row[c_stock - 1].strip() if c_stock - 1 < len(row) else ""
+        status = row[c_status - 1].strip().upper() if c_status - 1 < len(row) else ""
+        if stock_code and status == "READY":
+            ready_rows.setdefault(stock_code, []).append((rownum, row))
+
+    previews: Dict[str, Dict[str, Any]] = {}
+    for product in products:
+        product_id = str(product.get("product_id") or "").strip()
+        stock_code = str(product.get("stock_code") or "").strip()
+        if not product_id or not stock_code:
+            continue
+        best: Optional[Tuple[Tuple[str, int], Dict[str, Any]]] = None
+        for rownum, row in ready_rows.get(stock_code, []):
+            pricing = stock_item_pricing(
+                row,
+                headers,
+                normalize_int(product.get("price"), 0),
+                bool(product.get("pricing_enabled", True)),
+            )
+            if normalize_int(pricing.get("price"), 0) <= 0:
+                continue
+            expires_at = str(pricing.get("expires_at") or "9999-12-31 23:59:59")
+            key = (expires_at, rownum)
+            if best is None or key < best[0]:
+                best = (key, pricing)
+        if best:
+            previews[product_id] = best[1]
+    return previews
+
 def find_product_by_id(pid: str) -> Optional[Dict[str, Any]]:
     for p in load_products_cached():
         if p["product_id"] == pid:
@@ -1771,10 +1813,8 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     try:
         products = await gs_call(load_products_cached)
         stock_ready = await gs_call(stock_count_ready_by_code_cached)
-        fallback_prices = {p["stock_code"]: int(p["price"]) for p in products}
-        pricing_enabled = {p["stock_code"]: bool(p.get("pricing_enabled", True)) for p in products}
-        stock_prices = await gs_call(stock_price_preview_by_code, fallback_prices, pricing_enabled)
-        products = [{**p, **stock_prices.get(p["stock_code"], {})} for p in products]
+        stock_prices = await gs_call(stock_price_preview_for_products, products)
+        products = [{**p, **stock_prices.get(p["product_id"], {})} for p in products]
     except Exception as e:
         logger.exception("show_products error")
         await context.bot.send_message(
