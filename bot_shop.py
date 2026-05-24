@@ -322,13 +322,13 @@ def stock_item_pricing(row: List[str], headers: Dict[str, int], fallback_price: 
         col = headers.get(key.lower())
         return row[col - 1].strip() if col and col - 1 < len(row) else ""
 
-    base_price = normalize_int(cell("base_price") or cell("price"), 0)
-    if base_price <= 0:
-        base_price = normalize_int(fallback_price, 0)
+    fallback_price = normalize_int(fallback_price, 0)
+    item_base_price = normalize_int(cell("base_price") or cell("price"), 0)
     duration_days = normalize_int(cell("duration_days") or cell("total_days"), 0)
     expires_at = cell("expires_at") or cell("expire_at") or cell("expiry_at")
-    if not enable_time_pricing:
-        return calculate_time_based_price(base_price, 0, "")
+    if not enable_time_pricing or duration_days <= 0 or not expires_at:
+        return calculate_time_based_price(fallback_price, 0, "")
+    base_price = item_base_price if item_base_price > 0 else fallback_price
     return calculate_time_based_price(base_price, duration_days, expires_at)
 
 def generate_order_id() -> str:
