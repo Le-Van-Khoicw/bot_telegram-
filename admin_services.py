@@ -844,22 +844,31 @@ def update_stock_item(data: Dict[str, Any]) -> Dict[str, Any]:
         raise RuntimeError("POOL thieu header")
 
     item_id = str(data.get("item_id") or "").strip()
+    stock_code = str(data.get("stock_code") or "").strip()
+    secret = str(data.get("secret") or "").strip()
     status = str(data.get("status") or "").strip().upper()
-    if not item_id:
-        raise ValueError("Missing item_id")
+    if not item_id and not secret:
+        raise ValueError("Missing item_id or secret")
     if status not in {"READY", "SOLD"}:
         raise ValueError("Chi ho tro status READY hoac SOLD")
 
     c_item = headers.get("item_id")
+    c_stock = headers.get("stock_code")
+    c_secret = headers.get("secret")
     c_status = headers.get("status")
-    if not c_item or not c_status:
-        raise RuntimeError("POOL thieu cot item_id/status")
+    if not c_status:
+        raise RuntimeError("POOL thieu cot status")
 
     values = shop._ws_pool.get_all_values()
     target_row = 0
     for rownum, row in enumerate(values[1:], start=2):
-        current_item_id = row[c_item - 1].strip() if c_item - 1 < len(row) else ""
-        if current_item_id == item_id:
+        current_item_id = row[c_item - 1].strip() if c_item and c_item - 1 < len(row) else ""
+        current_stock = row[c_stock - 1].strip() if c_stock and c_stock - 1 < len(row) else ""
+        current_secret = row[c_secret - 1].strip() if c_secret and c_secret - 1 < len(row) else ""
+        if item_id and current_item_id == item_id:
+            target_row = rownum
+            break
+        if not item_id and secret and current_secret == secret and (not stock_code or current_stock == stock_code):
             target_row = rownum
             break
     if not target_row:

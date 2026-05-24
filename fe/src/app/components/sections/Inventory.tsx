@@ -156,15 +156,26 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
     toast.success("Đã copy stock");
   };
 
-  const updateStockStatus = async (itemId: string, status: "READY" | "SOLD") => {
-    if (!itemId || itemId === "—") return toast.warning("Item này thiếu item_id");
+  const updateStockStatus = async (item: any, status: "READY" | "SOLD") => {
+    const itemId = text(item.item_id);
+    const secret = text(item.secret);
+    const stockCode = text(item.stock_code);
+    if ((itemId === "—" || itemId === "â€”") && (secret === "—" || secret === "â€”")) {
+      return toast.warning("Item này thiếu item_id và secret");
+    }
     if (status === "READY" && !window.confirm("Trả item này về READY để bán lại?")) return;
     if (status === "SOLD" && !window.confirm("Đánh dấu item này là đã bán thủ công?")) return;
     setBusy(true);
     try {
       await adminApi("/admin/api/stock/update", adminKey, {
         method: "POST",
-        body: JSON.stringify({ item_id: itemId, status, sold_order_id: "MANUAL" }),
+        body: JSON.stringify({
+          item_id: itemId === "—" || itemId === "â€”" ? "" : itemId,
+          stock_code: stockCode === "—" || stockCode === "â€”" ? "" : stockCode,
+          secret: secret === "—" || secret === "â€”" ? "" : secret,
+          status,
+          sold_order_id: "MANUAL",
+        }),
       });
       toast.success(status === "READY" ? "Đã trả item về READY" : "Đã đánh dấu item là SOLD");
       await refresh();
@@ -301,10 +312,10 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                         <TableCell className="text-xs text-muted-foreground">{text(item.sold_order_id)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button size="sm" variant="outline" onClick={() => updateStockStatus(itemId, "SOLD")} disabled={busy || status === "SOLD"}>
+                            <Button size="sm" variant="outline" onClick={() => updateStockStatus(item, "SOLD")} disabled={busy || status === "SOLD"}>
                               Đã bán
                             </Button>
-                            <Button size="sm" variant="outline" onClick={() => updateStockStatus(itemId, "READY")} disabled={busy || status === "READY"}>
+                            <Button size="sm" variant="outline" onClick={() => updateStockStatus(item, "READY")} disabled={busy || status === "READY"}>
                               Bán lại
                             </Button>
                           </div>
