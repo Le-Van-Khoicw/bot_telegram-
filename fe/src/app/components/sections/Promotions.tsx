@@ -172,6 +172,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                 <TableHead>User ID</TableHead>
                 <TableHead>Username</TableHead>
                 <TableHead>Ho ten</TableHead>
+                <TableHead className="text-center">Lan</TableHead>
                 <TableHead>Ma da tang</TableHead>
                 <TableHead className="text-center">Giam</TableHead>
                 <TableHead className="text-center">Don toi thieu</TableHead>
@@ -186,6 +187,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   <TableCell className="font-mono text-xs">{text(award.user_id)}</TableCell>
                   <TableCell className="text-sm text-blue-600">{text(award.username)}</TableCell>
                   <TableCell className="text-sm">{text(award.full_name)}</TableCell>
+                  <TableCell className="text-center">{text(award.cycle)}</TableCell>
                   <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(award.code)}</code></TableCell>
                   <TableCell className="text-center">{money(award.discount_amount || award.discount_percent)}</TableCell>
                   <TableCell className="text-center">{money(award.min_order_total)}</TableCell>
@@ -194,7 +196,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   <TableCell className="font-mono text-xs">{text(award.used_order_id)}</TableCell>
                 </TableRow>
               ))}
-              {!awards.length && <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">Chua tang ma nao</TableCell></TableRow>}
+              {!awards.length && <TableRow><TableCell colSpan={10} className="py-8 text-center text-muted-foreground">Chua tang ma nao</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>

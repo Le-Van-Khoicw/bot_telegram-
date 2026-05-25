@@ -119,7 +119,7 @@ SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}
 SESSION_EXPIRY_SECONDS = 600  # 10 minutes
 CHECKOUT_IN_PROGRESS: set[int] = set()
 PROMOTION_HEADERS = ["id", "code", "discount_amount", "min_order_total", "required_orders", "expires_days", "status", "note", "created_at", "updated_at"]
-PROMO_AWARD_HEADERS = ["user_id", "username", "full_name", "promo_id", "code", "discount_amount", "min_order_total", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
+PROMO_AWARD_HEADERS = ["user_id", "username", "full_name", "promo_id", "cycle", "code", "discount_amount", "min_order_total", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
 PROMO_SETTINGS_HEADERS = ["key", "value", "updated_at"]
 
 
@@ -761,10 +761,16 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
     profile = user_profile_from_sheet(user_id)
     now = now_str()
     awarded: List[Dict[str, str]] = []
-    existing_keys = {
-        (str(row.get("user_id") or "").strip(), str(row.get("promo_id") or "").strip())
-        for row in existing
-    }
+    existing_keys = set()
+    for row in existing:
+        uid = str(row.get("user_id") or "").strip()
+        promo_id = str(row.get("promo_id") or "").strip()
+        if not uid or not promo_id:
+            continue
+        cycle = normalize_int(row.get("cycle"), 0)
+        if cycle <= 0:
+            cycle = 1
+        existing_keys.add((uid, promo_id, cycle))
     headers = headers_map(ws)
     rows_to_append = []
     for promo in active_promotions():
@@ -775,32 +781,37 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
         min_order_total = normalize_int(promo.get("min_order_total"), 0)
         if not promo_id or not code_base or required <= 0 or discount <= 0:
             continue
-        if delivered_count < required or (str(user_id), promo_id) in existing_keys:
+        earned_cycles = delivered_count // required
+        if earned_cycles <= 0:
             continue
         expires_days = normalize_int(promo.get("expires_days"), 7)
-        expires_at = (now_dt() + timedelta(days=max(1, expires_days))).strftime("%Y-%m-%d %H:%M:%S")
-        code = f"{code_base}{str(user_id)[-4:]}"
-        award = {
-            "user_id": str(user_id),
-            "username": profile.get("username", ""),
-            "full_name": profile.get("full_name", ""),
-            "promo_id": promo_id,
-            "code": code,
-            "discount_amount": str(discount),
-            "min_order_total": str(min_order_total),
-            "status": "ACTIVE",
-            "awarded_at": now,
-            "expires_at": expires_at,
-            "used_order_id": "",
-            "used_at": "",
-        }
-        row = [""] * len(headers)
-        for key, value in award.items():
-            col = headers.get(key.lower())
-            if col:
-                row[col - 1] = value
-        rows_to_append.append(row)
-        awarded.append(award)
+        for cycle in range(1, earned_cycles + 1):
+            if (str(user_id), promo_id, cycle) in existing_keys:
+                continue
+            expires_at = (now_dt() + timedelta(days=max(1, expires_days))).strftime("%Y-%m-%d %H:%M:%S")
+            code = f"{code_base}{str(user_id)[-4:]}" if cycle == 1 else f"{code_base}{str(user_id)[-4:]}-{cycle}"
+            award = {
+                "user_id": str(user_id),
+                "username": profile.get("username", ""),
+                "full_name": profile.get("full_name", ""),
+                "promo_id": promo_id,
+                "cycle": str(cycle),
+                "code": code,
+                "discount_amount": str(discount),
+                "min_order_total": str(min_order_total),
+                "status": "ACTIVE",
+                "awarded_at": now,
+                "expires_at": expires_at,
+                "used_order_id": "",
+                "used_at": "",
+            }
+            row = [""] * len(headers)
+            for key, value in award.items():
+                col = headers.get(key.lower())
+                if col:
+                    row[col - 1] = value
+            rows_to_append.append(row)
+            awarded.append(award)
     if rows_to_append:
         ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
     return awarded
