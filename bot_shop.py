@@ -2366,7 +2366,11 @@ async def checkout_flow(
         return False
 
     subtotal = sum(normalize_int(item.get("price"), int(product["price"])) for item in reserved_items)
-    promo_award = await gs_call(best_available_promo_award, user_id)
+    try:
+        promo_award = await gs_call(best_available_promo_award, user_id)
+    except Exception as exc:
+        logger.warning("promo lookup failed user=%s: %s", user_id, exc)
+        promo_award = None
     promo_code = str((promo_award or {}).get("code") or "")
     promo_amount = normalize_int((promo_award or {}).get("discount_amount") or (promo_award or {}).get("discount_percent"), 0)
     promo_min_total = normalize_int((promo_award or {}).get("min_order_total"), 0)
