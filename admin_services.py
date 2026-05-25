@@ -605,7 +605,7 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
     code = str(data.get("code") or "").strip().upper()
     discount = max(1, shop.normalize_int(data.get("discount_amount") or data.get("discount_percent"), 0))
     min_order_total = max(0, shop.normalize_int(data.get("min_order_total"), 0))
-    required = max(1, shop.normalize_int(data.get("required_orders"), 0))
+    required = max(0, shop.normalize_int(data.get("required_orders"), 0))
     expires_days = max(1, shop.normalize_int(data.get("expires_days"), 7))
     status = str(data.get("status") or "ACTIVE").strip().upper()
     if status not in ("ACTIVE", "PAUSED"):

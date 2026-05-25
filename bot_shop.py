@@ -112,6 +112,7 @@ _ws_ful = None
 
 
 PENDING_QTY: Dict[int, Dict[str, Any]] = {}  # user_id -> {"product_id": ...}
+PENDING_PROMO_INPUT: Dict[int, Dict[str, str]] = {}  # user_id -> {"order_id": ...}
 
 # ✅ Cache for qty selections to avoid long callback_data (Telegram limit 64 bytes)
 # session_id -> {"pid": ..., "created_at": timestamp}
@@ -367,6 +368,7 @@ def build_vietqr_image_url(order_id: str, amount: int) -> str:
 def checkout_keyboard_pending_with_qr(order_id: str, qr_url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔗 Mở QR thanh toán", url=qr_url)],
+        [InlineKeyboardButton("🎁 Nhập mã khuyến mãi", callback_data=f"promo|{order_id}")],
         [
             InlineKeyboardButton("✅ Xác nhận đã thanh toán", callback_data=f"confirm|{order_id}"),
             InlineKeyboardButton("❌ Huỷ đơn", callback_data=f"cancel|{order_id}"),
@@ -732,6 +734,15 @@ def load_promotions() -> List[Dict[str, str]]:
 def active_promotions() -> List[Dict[str, str]]:
     return [p for p in load_promotions() if str(p.get("status") or "ACTIVE").strip().upper() == "ACTIVE"]
 
+def active_promotion_by_code(code: str) -> Optional[Dict[str, str]]:
+    target = str(code or "").strip().upper()
+    if not target:
+        return None
+    for promo in active_promotions():
+        if str(promo.get("code") or "").strip().upper() == target:
+            return promo
+    return None
+
 def count_delivered_orders_for_user(user_id: int) -> int:
     init_sheets()
     count = 0
@@ -837,6 +848,68 @@ def best_available_promo_award(user_id: int, subtotal: int = 0) -> Optional[Dict
         candidates.append(row)
     candidates.sort(key=lambda x: normalize_int(x.get("discount_amount") or x.get("discount_percent"), 0), reverse=True)
     return candidates[0] if candidates else None
+
+def claim_manual_promo_code(user_id: int, code: str, subtotal: int) -> Optional[Dict[str, str]]:
+    code = str(code or "").strip().upper()
+    subtotal = normalize_int(subtotal, 0)
+    if not code:
+        return None
+    now = now_dt()
+    ws = promo_awards_ws()
+    existing = get_all_records(ws)
+    for row in existing:
+        row_code = str(row.get("code") or "").strip().upper()
+        if row_code != code:
+            continue
+        status = str(row.get("status") or "").strip().upper()
+        if status == "USED":
+            return None
+        if str(row.get("user_id") or "").strip() != str(user_id):
+            return None
+        exp = parse_dt(str(row.get("expires_at") or ""))
+        if exp and exp < now:
+            return None
+        discount = normalize_int(row.get("discount_amount") or row.get("discount_percent"), 0)
+        min_order_total = normalize_int(row.get("min_order_total"), 0)
+        if discount <= 0 or subtotal < min_order_total:
+            return None
+        return row
+
+    promo = active_promotion_by_code(code)
+    if not promo:
+        return None
+    if normalize_int(promo.get("required_orders"), 0) > 0:
+        return None
+    discount = normalize_int(promo.get("discount_amount") or promo.get("discount_percent"), 0)
+    min_order_total = normalize_int(promo.get("min_order_total"), 0)
+    if discount <= 0 or subtotal < min_order_total:
+        return None
+
+    profile = user_profile_from_sheet(user_id)
+    expires_days = normalize_int(promo.get("expires_days"), 7)
+    award = {
+        "user_id": str(user_id),
+        "username": profile.get("username", ""),
+        "full_name": profile.get("full_name", ""),
+        "promo_id": str(promo.get("id") or "").strip(),
+        "cycle": "manual",
+        "code": code,
+        "discount_amount": str(discount),
+        "min_order_total": str(min_order_total),
+        "status": "ACTIVE",
+        "awarded_at": now_str(),
+        "expires_at": (now_dt() + timedelta(days=max(1, expires_days))).strftime("%Y-%m-%d %H:%M:%S"),
+        "used_order_id": "",
+        "used_at": "",
+    }
+    headers = headers_map(ws)
+    row = [""] * len(headers)
+    for key, value in award.items():
+        col = headers.get(key.lower())
+        if col:
+            row[col - 1] = value
+    ws.append_row(row, value_input_option="USER_ENTERED")
+    return award
 
 def mark_promo_award_used(user_id: int, code: str, order_id: str) -> None:
     ws = promo_awards_ws()
@@ -1734,6 +1807,7 @@ def qty_select_kb(pid: str) -> InlineKeyboardMarkup:
 
 def checkout_keyboard_pending(order_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎁 Nhập mã khuyến mãi", callback_data=f"promo|{order_id}")],
         [
             InlineKeyboardButton("✅ Xác nhận đã thanh toán", callback_data=f"confirm|{order_id}"),
             InlineKeyboardButton("❌ Huỷ đơn", callback_data=f"cancel|{order_id}"),
@@ -2615,6 +2689,143 @@ async def checkout_flow(
 
 
 
+async def prompt_promo_code(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
+    q = update.callback_query
+    await q.answer()
+    order = await gs_call(get_order, order_id)
+    if not order:
+        return await context.bot.send_message(chat_id=q.from_user.id, text="❌ Không tìm thấy đơn.", reply_markup=main_menu_keyboard())
+    if str(order.get("user_id") or "").strip() != str(q.from_user.id):
+        return await q.answer("⛔ Bạn không có quyền thao tác đơn này.", show_alert=True)
+    if str(order.get("status") or "").strip().upper() != "PENDING":
+        return await q.answer("Đơn này không còn chờ thanh toán.", show_alert=True)
+    PENDING_PROMO_INPUT[q.from_user.id] = {"order_id": order_id}
+    await context.bot.send_message(
+        chat_id=q.from_user.id,
+        text=(
+            "🎁 Nhập mã khuyến mãi cho đơn này.\n\n"
+            "Ví dụ: `TANGGPT100`\n"
+            "Gõ `huy` nếu không muốn nhập nữa."
+        ),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại đơn hàng", callback_data=f"back_order|{order_id}")]]),
+    )
+
+
+async def resend_checkout_message(context: ContextTypes.DEFAULT_TYPE, user_id: int, order: Dict[str, str]) -> None:
+    order_id = str(order.get("order_id") or "").strip()
+    product = await gs_call(find_product_by_stock_code, order.get("stock_code", ""))
+    if not product:
+        product = {"name": order.get("stock_code", ""), "price": normalize_int(order.get("total"), 0)}
+    qty = normalize_int(order.get("qty"), 1)
+    total = normalize_int(order.get("total"), 0)
+    subtotal = normalize_int(order.get("subtotal"), total)
+    promo_discount = normalize_int(order.get("promo_discount"), 0)
+    unit_price = round(subtotal / qty) if qty > 0 else normalize_int(product.get("price"), total)
+    remain = remaining_seconds(order.get("created_at", ""), ORDER_TTL_SECONDS)
+    caption = build_checkout_caption_with_countdown(
+        order_id=order_id,
+        product_name=str(product.get("name") or order.get("stock_code") or ""),
+        unit_price=unit_price,
+        qty=qty,
+        total=total,
+        remain_seconds=max(0, remain),
+        status_line="✅ *ĐÃ ÁP MÃ - BẤM XÁC NHẬN ĐỂ NHẬN HÀNG*" if str(order.get("status") or "").strip().upper() == "PAID" else "⏳ *ĐANG CHỜ THANH TOÁN*",
+        subtotal=subtotal,
+        promo_code=str(order.get("promo_code") or ""),
+        promo_discount=promo_discount,
+    )
+    qr_url = build_vietqr_image_url(order_id, total)
+    old_msg_id = str(order.get("qr_msg_id") or "").strip()
+    if old_msg_id.isdigit():
+        try:
+            await context.bot.delete_message(chat_id=user_id, message_id=int(old_msg_id))
+        except Exception:
+            pass
+    if total <= 0:
+        msg = await context.bot.send_message(
+            chat_id=user_id,
+            text=caption + "\n\n🎁 Đơn này đã được giảm về 0đ, bấm *Xác nhận đã thanh toán* để bot giao hàng.",
+            parse_mode="Markdown",
+            reply_markup=checkout_keyboard_pending(order_id),
+            disable_web_page_preview=True,
+        )
+        await gs_call(set_order_fields, order_id, {"qr_msg_id": str(msg.message_id)})
+        return
+    qr_bytes = await fetch_qr_bytes(qr_url, timeout=6)
+    if qr_bytes:
+        bio = io.BytesIO(qr_bytes)
+        bio.name = "vietqr.png"
+        msg = await context.bot.send_photo(
+            chat_id=user_id,
+            photo=bio,
+            caption=caption,
+            parse_mode="Markdown",
+            reply_markup=checkout_keyboard_pending(order_id),
+        )
+    else:
+        msg = await context.bot.send_message(
+            chat_id=user_id,
+            text=caption + "\n\n🔗 Nếu ảnh QR không hiện, bấm nút *Mở QR thanh toán* bên dưới.",
+            parse_mode="Markdown",
+            reply_markup=checkout_keyboard_pending_with_qr(order_id, qr_url),
+            disable_web_page_preview=True,
+        )
+    await gs_call(set_order_fields, order_id, {"qr_msg_id": str(msg.message_id)})
+
+
+async def handle_promo_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
+    pending = PENDING_PROMO_INPUT.get(user_id)
+    if not pending:
+        return False
+    raw = (update.message.text or "").strip()
+    if normalize_menu_text(raw) in {"huy", "huỷ", "hủy", "cancel"}:
+        PENDING_PROMO_INPUT.pop(user_id, None)
+        await update.message.reply_text("Đã huỷ nhập mã khuyến mãi.", reply_markup=main_menu_keyboard())
+        return True
+
+    order_id = str(pending.get("order_id") or "").strip()
+    order = await gs_call(get_order, order_id)
+    if not order:
+        PENDING_PROMO_INPUT.pop(user_id, None)
+        await update.message.reply_text("❌ Không tìm thấy đơn.", reply_markup=main_menu_keyboard())
+        return True
+    if str(order.get("user_id") or "").strip() != str(user_id) or str(order.get("status") or "").strip().upper() != "PENDING":
+        PENDING_PROMO_INPUT.pop(user_id, None)
+        await update.message.reply_text("❌ Đơn này không còn áp mã được.", reply_markup=main_menu_keyboard())
+        return True
+
+    subtotal = normalize_int(order.get("subtotal"), normalize_int(order.get("total"), 0) + normalize_int(order.get("promo_discount"), 0))
+    award = await gs_call(claim_manual_promo_code, user_id, raw, subtotal)
+    if not award:
+        await update.message.reply_text(
+            "❌ Mã không hợp lệ, đã dùng, hết hạn hoặc đơn chưa đạt mức tối thiểu. Bạn nhập mã khác hoặc gõ `huy`.",
+            parse_mode="Markdown",
+        )
+        return True
+
+    discount = min(subtotal, normalize_int(award.get("discount_amount") or award.get("discount_percent"), 0))
+    total = max(0, subtotal - discount)
+    await gs_call(set_order_fields, order_id, {
+        "subtotal": subtotal,
+        "promo_code": str(award.get("code") or "").strip(),
+        "promo_discount": discount,
+        "total": total,
+        **({"status": "PAID", "paid_at": now_str(), "tx_id": f"PROMO:{str(award.get('code') or '').strip()}"} if total <= 0 else {}),
+    })
+    updated_order = await gs_call(get_order, order_id)
+    if updated_order:
+        await resend_checkout_message(context, user_id, updated_order)
+    PENDING_PROMO_INPUT.pop(user_id, None)
+    await update.message.reply_text(
+        f"✅ Đã áp mã `{escape_markdown(str(award.get('code') or '').strip(), version=1)}`: giảm *{fmt_price(discount)}*.\n"
+        f"Số cần chuyển mới: *{fmt_price(total)}*",
+        parse_mode="Markdown",
+    )
+    return True
+
+
 
 # ================== CONFIRM / CANCEL ==================
 async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
@@ -3245,6 +3456,8 @@ async def show_account(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user):
 # ================== TEXT ROUTER ==================
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await handle_promo_code_input(update, context):
+        return
     if await handle_custom_qty_input(update, context):
         return
 
@@ -3492,6 +3705,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("cancel|"):
         oid = data.split("|", 1)[1]
         return await cancel_order(update, context, oid)
+
+    if data.startswith("promo|"):
+        oid = data.split("|", 1)[1]
+        return await prompt_promo_code(update, context, oid)
+
+    if data.startswith("back_order|"):
+        await q.answer("Bạn nhập mã trực tiếp ở ô chat, hoặc bấm xác nhận khi đã chuyển khoản.")
+        return
 
     if data.startswith("rebuy|"):
         pid = data.split("|", 1)[1]

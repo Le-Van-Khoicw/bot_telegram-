@@ -212,7 +212,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
               <div className="space-y-1"><Label>Don toi thieu</Label><Input type="number" min="0" value={form.min_order_total} onChange={(event) => setForm({ ...form, min_order_total: event.target.value })} /></div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1"><Label>Moc don</Label><Input type="number" min="1" value={form.required_orders} onChange={(event) => setForm({ ...form, required_orders: event.target.value })} /></div>
+              <div className="space-y-1"><Label>Moc don (0 = ma nhap tay)</Label><Input type="number" min="0" value={form.required_orders} onChange={(event) => setForm({ ...form, required_orders: event.target.value })} /></div>
               <div className="space-y-1"><Label>Han ngay</Label><Input type="number" min="1" value={form.expires_days} onChange={(event) => setForm({ ...form, expires_days: event.target.value })} /></div>
             </div>
             <div className="space-y-1">
