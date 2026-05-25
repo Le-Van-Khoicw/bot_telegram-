@@ -40,6 +40,9 @@ def _ensure_headers(ws, required: List[str]) -> Dict[str, int]:
             headers[lower] = col
             cells.append(Cell(1, col, key))
     if cells:
+        col_count = int(getattr(ws, "col_count", 0) or 0)
+        if len(headers) > col_count:
+            ws.add_cols(len(headers) - col_count)
         ws.update_cells(cells, value_input_option="USER_ENTERED")
     return headers
 
@@ -777,6 +780,22 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
 
     delivery_rows.sort(key=lambda x: x.get("delivered_at", ""), reverse=True)
 
+    promotions = []
+    promo_awards = []
+    promo_settings = {"menu_enabled": "FALSE", "menu_text": ""}
+    try:
+        promotions = shop.load_promotions()
+    except Exception as exc:
+        logger.exception("load PROMOTIONS failed during snapshot: %s", exc)
+    try:
+        promo_awards = load_promotion_awards()[:limit]
+    except Exception as exc:
+        logger.exception("load PROMO_AWARDS failed during snapshot: %s", exc)
+    try:
+        promo_settings = shop.load_promo_settings()
+    except Exception as exc:
+        logger.exception("load PROMO_SETTINGS failed during snapshot: %s", exc)
+
     result = {
         "generated_at": shop.now_str(),
         "timezone": shop.APP_TIMEZONE,
@@ -797,9 +816,9 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
         "fulfillments": fulfillments[:limit],
         "deliveries": delivery_rows[:limit],
         "expenses": expenses[:limit],
-        "promotions": shop.load_promotions(),
-        "promo_awards": load_promotion_awards()[:limit],
-        "promo_settings": shop.load_promo_settings(),
+        "promotions": promotions,
+        "promo_awards": promo_awards,
+        "promo_settings": promo_settings,
     }
     if include_materials:
         result["materials"] = materials[:pool_limit]

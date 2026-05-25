@@ -456,7 +456,11 @@ def register_admin_routes(app: FastAPI) -> None:
     @app.get("/admin/api/snapshot")
     async def admin_snapshot(request: Request, limit: int = 100, pool_limit: int = 2000, include_materials: bool = False):
         require_admin(request)
-        return await asyncio.to_thread(snapshot, limit, pool_limit, include_materials)
+        try:
+            return await asyncio.to_thread(snapshot, limit, pool_limit, include_materials)
+        except Exception as exc:
+            logger.exception("admin_snapshot failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.post("/admin/api/products")
     async def admin_save_product(request: Request):
