@@ -119,7 +119,7 @@ SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}
 SESSION_EXPIRY_SECONDS = 600  # 10 minutes
 CHECKOUT_IN_PROGRESS: set[int] = set()
 PROMOTION_HEADERS = ["id", "code", "discount_amount", "min_order_total", "required_orders", "expires_days", "status", "note", "created_at", "updated_at"]
-PROMO_AWARD_HEADERS = ["user_id", "promo_id", "code", "discount_amount", "min_order_total", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
+PROMO_AWARD_HEADERS = ["user_id", "username", "full_name", "promo_id", "code", "discount_amount", "min_order_total", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
 PROMO_SETTINGS_HEADERS = ["key", "value", "updated_at"]
 
 
@@ -412,6 +412,9 @@ def build_checkout_caption_with_countdown(
     remain_seconds: int,
     status_line: str = "⏳ *ĐANG CHỜ THANH TOÁN*",
     price_note: str = "",
+    subtotal: int = 0,
+    promo_code: str = "",
+    promo_discount: int = 0,
 ) -> str:
     remain_text = format_countdown(remain_seconds)
     bank_acc = PAYMENT_INFO["bank_number"]
@@ -420,6 +423,18 @@ def build_checkout_caption_with_countdown(
 
     pay_note = normalize_order_ref(order_id) # hàm của bạn đã bỏ ký tự lạ
     price_note_line = f"ℹ️ {price_note}\n" if price_note else ""
+    subtotal = normalize_int(subtotal, 0)
+    promo_discount = normalize_int(promo_discount, 0)
+    promo_code = str(promo_code or "").strip()
+    price_lines = ""
+    if promo_code and promo_discount > 0:
+        price_lines = (
+            f"💵 Tạm tính: *{fmt_price(subtotal or total + promo_discount)}*\n"
+            f"🎁 KM `{escape_markdown(promo_code, version=1)}`: *-{fmt_price(promo_discount)}*\n"
+            f"💰 Cần chuyển: *{fmt_price(total)}*\n"
+        )
+    else:
+        price_lines = f"💰 Tổng: *{fmt_price(total)}*\n"
 
     return (
         f"{status_line}\n\n"
@@ -427,7 +442,7 @@ def build_checkout_caption_with_countdown(
         f"📦 SP: *{safe_product_name}* — {fmt_price(unit_price)}\n"
         f"{price_note_line}"
         f"🔢 SL: *{qty}*\n"
-        f"💰 Tổng: *{fmt_price(total)}*\n\n"
+        f"{price_lines}\n"
         f"⏳ *Hết hạn sau:* `{remain_text}`\n\n"
         f"📌 *Thanh toán:*\n"
         f"• STK: `{bank_acc}`\n"
@@ -727,10 +742,23 @@ def count_delivered_orders_for_user(user_id: int) -> int:
             count += 1
     return count
 
+def user_profile_from_sheet(user_id: int) -> Dict[str, str]:
+    init_sheets()
+    target = str(user_id)
+    for row in get_all_records(_ws_users):
+        uid = str(row.get("chat_id") or row.get("user_id") or "").strip()
+        if uid == target:
+            return {
+                "username": str(row.get("username") or "").strip(),
+                "full_name": str(row.get("full_name") or row.get("name") or "").strip(),
+            }
+    return {"username": "", "full_name": ""}
+
 def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
     ws = promo_awards_ws()
     existing = get_all_records(ws)
     delivered_count = count_delivered_orders_for_user(user_id)
+    profile = user_profile_from_sheet(user_id)
     now = now_str()
     awarded: List[Dict[str, str]] = []
     existing_keys = {
@@ -754,6 +782,8 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
         code = f"{code_base}{str(user_id)[-4:]}"
         award = {
             "user_id": str(user_id),
+            "username": profile.get("username", ""),
+            "full_name": profile.get("full_name", ""),
             "promo_id": promo_id,
             "code": code,
             "discount_amount": str(discount),
@@ -775,8 +805,9 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
         ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
     return awarded
 
-def best_available_promo_award(user_id: int) -> Optional[Dict[str, str]]:
+def best_available_promo_award(user_id: int, subtotal: int = 0) -> Optional[Dict[str, str]]:
     now = now_dt()
+    subtotal = normalize_int(subtotal, 0)
     candidates = []
     for row in get_all_records(promo_awards_ws()):
         if str(row.get("user_id") or "").strip() != str(user_id):
@@ -785,6 +816,12 @@ def best_available_promo_award(user_id: int) -> Optional[Dict[str, str]]:
             continue
         exp = parse_dt(str(row.get("expires_at") or ""))
         if exp and exp < now:
+            continue
+        discount = normalize_int(row.get("discount_amount") or row.get("discount_percent"), 0)
+        min_order_total = normalize_int(row.get("min_order_total"), 0)
+        if discount <= 0:
+            continue
+        if subtotal > 0 and min_order_total > subtotal:
             continue
         candidates.append(row)
     candidates.sort(key=lambda x: normalize_int(x.get("discount_amount") or x.get("discount_percent"), 0), reverse=True)
@@ -1240,6 +1277,9 @@ def append_order(order_row: Dict[str, Any]) -> None:
             h[key] = col
             cells.append(Cell(1, col, key))
     if cells:
+        col_count = int(getattr(_ws_orders, "col_count", 0) or 0)
+        if len(h) > col_count:
+            _ws_orders.add_cols(len(h) - col_count)
         _ws_orders.update_cells(cells, value_input_option="USER_ENTERED")
 
     row_values = [""] * len(h)
@@ -1985,6 +2025,8 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         stock_ready = await gs_call(stock_count_ready_by_code_cached)
         stock_prices = await gs_call(stock_price_preview_for_products, products)
         promo_text = await gs_call(menu_promo_text)
+        await gs_call(award_promotions_for_user, chat_id)
+        promo_award = await gs_call(best_available_promo_award, chat_id)
         products = [{**p, **stock_prices.get(p["product_id"], {})} for p in products]
     except Exception as e:
         logger.exception("show_products error")
@@ -2003,7 +2045,16 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    promo_block = f"\n\n🎁 *Khuyến mãi:*\n{promo_text}" if promo_text else ""
+    promo_lines = []
+    if promo_text:
+        promo_lines.append(promo_text)
+    if promo_award:
+        code = str(promo_award.get("code") or "").strip()
+        discount = normalize_int(promo_award.get("discount_amount") or promo_award.get("discount_percent"), 0)
+        min_total = normalize_int(promo_award.get("min_order_total"), 0)
+        min_note = f" cho đơn từ {fmt_price(min_total)}" if min_total > 0 else ""
+        promo_lines.append(f"Bạn đang có mã `{escape_markdown(code, version=1)}` giảm *{fmt_price(discount)}*{min_note}. Bot sẽ tự áp khi tạo đơn.")
+    promo_block = f"\n\n🎁 *Khuyến mãi:*\n" + "\n".join(promo_lines) if promo_lines else ""
     text = (
         "🛍 *MENU SẢN PHẨM*\n\n"
         "👉 Chọn sản phẩm bên dưới:"
@@ -2216,7 +2267,9 @@ async def countdown_job(context: ContextTypes.DEFAULT_TYPE):
         return
     order_qty = normalize_int(order.get("qty"), 1)
     order_total = normalize_int(order.get("total"), 0)
-    order_unit_price = order_total // order_qty if order_qty > 0 else int(p["price"])
+    order_subtotal = normalize_int(order.get("subtotal"), order_total)
+    order_promo_discount = normalize_int(order.get("promo_discount"), 0)
+    order_unit_price = order_subtotal // order_qty if order_qty > 0 else int(p["price"])
 
     caption = build_checkout_caption_with_countdown(
         order_id=order_id,
@@ -2226,6 +2279,9 @@ async def countdown_job(context: ContextTypes.DEFAULT_TYPE):
         total=order_total,
         remain_seconds=remain,
         status_line="⏳ *ĐANG CHỜ THANH TOÁN*",
+        subtotal=order_subtotal,
+        promo_code=str(order.get("promo_code") or ""),
+        promo_discount=order_promo_discount,
     )
     qr_url = build_vietqr_image_url(order_id, normalize_int(order.get("total"), 0))
     caption_with_link = caption
@@ -2370,7 +2426,8 @@ async def checkout_flow(
 
     subtotal = sum(normalize_int(item.get("price"), int(product["price"])) for item in reserved_items)
     try:
-        promo_award = await gs_call(best_available_promo_award, user_id)
+        await gs_call(award_promotions_for_user, user_id)
+        promo_award = await gs_call(best_available_promo_award, user_id, subtotal)
     except Exception as exc:
         logger.warning("promo lookup failed user=%s: %s", user_id, exc)
         promo_award = None
@@ -2378,6 +2435,15 @@ async def checkout_flow(
     promo_amount = normalize_int((promo_award or {}).get("discount_amount") or (promo_award or {}).get("discount_percent"), 0)
     promo_min_total = normalize_int((promo_award or {}).get("min_order_total"), 0)
     promo_discount = min(subtotal, promo_amount) if promo_code and promo_amount > 0 and subtotal >= promo_min_total else 0
+    if promo_code and promo_discount > 0:
+        logger.info(
+            "promo applied user=%s code=%s subtotal=%s discount=%s total=%s",
+            user_id,
+            promo_code,
+            subtotal,
+            promo_discount,
+            max(0, subtotal - promo_discount),
+        )
     total = max(0, subtotal - promo_discount)
     unit_price = round(subtotal / qty) if qty > 0 else int(product["price"])
     price_notes = []
@@ -2439,6 +2505,9 @@ async def checkout_flow(
         remain_seconds=ORDER_TTL_SECONDS,
         status_line="⏳ *ĐANG CHỜ THANH TOÁN*",
         price_note=price_note or product_price_note(product),
+        subtotal=subtotal,
+        promo_code=promo_code,
+        promo_discount=promo_discount,
     )
 
     # ✅ lấy qr bytes (nếu fail -> None)

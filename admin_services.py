@@ -657,6 +657,17 @@ def save_promo_settings(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def load_promotion_awards() -> List[Dict[str, str]]:
     rows = shop.get_all_records(shop.promo_awards_ws())
+    users = {
+        str(user.get("chat_id") or user.get("user_id") or "").strip(): user
+        for user in shop.get_all_records(shop._ws_users)
+    }
+    for row in rows:
+        uid = str(row.get("user_id") or "").strip()
+        user = users.get(uid, {})
+        if not row.get("username"):
+            row["username"] = str(user.get("username") or "").strip()
+        if not row.get("full_name"):
+            row["full_name"] = str(user.get("full_name") or user.get("name") or "").strip()
     rows.sort(key=lambda x: x.get("awarded_at") or "", reverse=True)
     return rows
 
