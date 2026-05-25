@@ -681,6 +681,9 @@ def ensure_worksheet(title: str, headers: List[str]):
             current.append(key)
             cells.append(Cell(1, len(current), key))
     if cells:
+        col_count = int(getattr(ws, "col_count", 0) or 0)
+        if len(current) > col_count:
+            ws.add_cols(len(current) - col_count)
         ws.update_cells(cells, value_input_option="USER_ENTERED")
     return ws
 
