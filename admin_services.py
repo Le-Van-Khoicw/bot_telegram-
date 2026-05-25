@@ -655,6 +655,7 @@ def save_promo_settings(data: Dict[str, Any]) -> Dict[str, Any]:
     for row in rows:
         payload.append([str(row.get(h) or "") for h in shop.PROMO_SETTINGS_HEADERS])
     ws.update(f"A1:C{len(payload)}", payload, value_input_option="USER_ENTERED")
+    shop._CACHE["promo_settings"] = {"ts": 0.0, "data": {}}
     return {"ok": True, "settings": shop.load_promo_settings()}
 
 

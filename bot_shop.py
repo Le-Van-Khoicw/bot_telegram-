@@ -21,6 +21,7 @@ from typing import Dict, Any, Optional, List, Tuple
 from zoneinfo import ZoneInfo
 
 import gspread
+from gspread.exceptions import APIError, WorksheetNotFound
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 load_dotenv()
@@ -149,6 +150,7 @@ def cleanup_expired_sessions():
 _CACHE = {
     "products": {"ts": 0.0, "data": []},
     "stock": {"ts": 0.0, "data": {}},
+    "promo_settings": {"ts": 0.0, "data": {}},
 }
 
 LAST_MAIL_INPUT: Dict[int, str] = {}
@@ -687,8 +689,13 @@ def ensure_worksheet(title: str, headers: List[str]):
     init_sheets()
     try:
         ws = _gs_sheet.worksheet(title)
-    except Exception:
-        ws = _gs_sheet.add_worksheet(title=title, rows=1000, cols=len(headers))
+    except WorksheetNotFound:
+        try:
+            ws = _gs_sheet.add_worksheet(title=title, rows=1000, cols=len(headers))
+        except APIError as exc:
+            if "already exists" not in str(exc).lower():
+                raise
+            ws = _gs_sheet.worksheet(title)
         ws.update(f"A1:{chr(64 + len(headers))}1", [headers], value_input_option="USER_ENTERED")
         return ws
     current = [str(h).strip() for h in ws.row_values(1)]
@@ -714,11 +721,16 @@ def promo_settings_ws():
     return ensure_worksheet(PROMO_SETTINGS_TAB, PROMO_SETTINGS_HEADERS)
 
 def load_promo_settings() -> Dict[str, str]:
+    cached = _CACHE.get("promo_settings", {})
+    if _ts() - float(cached.get("ts") or 0) < 120 and cached.get("data"):
+        return dict(cached["data"])
     settings = {str(row.get("key") or "").strip(): str(row.get("value") or "") for row in get_all_records(promo_settings_ws())}
-    return {
+    data = {
         "menu_enabled": settings.get("menu_enabled", "FALSE"),
         "menu_text": settings.get("menu_text", ""),
     }
+    _CACHE["promo_settings"] = {"ts": _ts(), "data": data}
+    return data
 
 def menu_promo_text() -> str:
     settings = load_promo_settings()
@@ -2109,9 +2121,6 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         products = await gs_call(load_products_cached)
         stock_ready = await gs_call(stock_count_ready_by_code_cached)
         stock_prices = await gs_call(stock_price_preview_for_products, products)
-        promo_text = await gs_call(menu_promo_text)
-        await gs_call(award_promotions_for_user, chat_id)
-        promo_award = await gs_call(best_available_promo_award, chat_id)
         products = [{**p, **stock_prices.get(p["product_id"], {})} for p in products]
     except Exception as e:
         logger.exception("show_products error")
@@ -2121,6 +2130,14 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu_keyboard(),
         )
         return
+
+    promo_text = ""
+    promo_award = None
+    try:
+        promo_text = await gs_call(menu_promo_text)
+        promo_award = await gs_call(best_available_promo_award, chat_id)
+    except Exception as exc:
+        logger.warning("promo menu skipped user=%s: %s", chat_id, exc)
 
     if not products:
         await context.bot.send_message(
