@@ -17,6 +17,7 @@ import { adminApi, money, text, type AdminSnapshot } from "./api";
 import { clearToken, getToken, saveToken } from "./utils/auth";
 
 const POLL_MS = 60_000;
+const DEFAULT_ADMIN_TITLE = "Khoi Van Store Admin";
 
 export default function App() {
   const [adminKey, setAdminKey] = useState(() => getToken() || "");
@@ -45,6 +46,8 @@ export default function App() {
   const audioRef = useRef<AudioContext | null>(null);
 
   const isAuthenticated = Boolean(adminKey);
+  const adminTitleValue = text(data?.brand?.admin_title);
+  const adminTitle = adminTitleValue === "—" || adminTitleValue === "â€”" ? DEFAULT_ADMIN_TITLE : adminTitleValue;
 
   const playNotifySound = useCallback(() => {
     try {
@@ -194,8 +197,8 @@ export default function App() {
   }, [adminKey, refresh]);
 
   useEffect(() => {
-    document.title = newCount ? `(${newCount}) Khoi Van Store Admin` : "Khoi Van Store Admin";
-  }, [newCount]);
+    document.title = newCount ? `(${newCount}) ${adminTitle}` : adminTitle;
+  }, [newCount, adminTitle]);
 
   const handleLogin = async (key: string) => {
     await adminApi("/admin/api/login", key);
@@ -283,7 +286,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 py-6 pt-16 md:pt-6">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h1 className="text-xl font-semibold tracking-tight">Khoi Van Store Admin</h1>
+              <h1 className="text-xl font-semibold tracking-tight">{adminTitle}</h1>
               <p className="text-xs text-muted-foreground">{message || "Sẵn sàng quản lý bot bán hàng"}</p>
             </div>
             <div className="flex flex-wrap gap-2">

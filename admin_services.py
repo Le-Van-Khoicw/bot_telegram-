@@ -798,6 +798,10 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
         logger.exception("load PROMO_SETTINGS failed during snapshot: %s", exc)
 
     result = {
+        "brand": {
+            "shop_name": shop.SHOP_NAME,
+            "admin_title": os.getenv("ADMIN_BRAND_NAME", f"{shop.SHOP_NAME} Admin").strip() or f"{shop.SHOP_NAME} Admin",
+        },
         "generated_at": shop.now_str(),
         "timezone": shop.APP_TIMEZONE,
         "summary": {

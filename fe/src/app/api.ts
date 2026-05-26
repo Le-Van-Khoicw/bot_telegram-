@@ -1,6 +1,10 @@
 export type AnyRow = Record<string, any>;
 
 export interface AdminSnapshot {
+  brand?: {
+    shop_name?: string;
+    admin_title?: string;
+  };
   generated_at: string;
   timezone: string;
   summary: {
