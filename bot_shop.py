@@ -1565,9 +1565,11 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
 
 
 def welcome_text(user_fullname: str) -> str:
+    safe_name = escape_markdown(str(user_fullname or ""), version=1)
+    safe_shop = escape_markdown(str(SHOP_NAME or "Shop"), version=1)
     return (
-        f"👋 *Xin chào {user_fullname}!* \n\n"
-        f"*{SHOP_NAME}* rất vui được phục vụ bạn.\n\n\n"
+        f"👋 *Xin chào {safe_name}!* \n\n"
+        f"*{safe_shop}* rất vui được phục vụ bạn.\n\n\n"
         "✅ Hàng số chuẩn • giao tự động 24/7\n\n"
         "⚡️ Thanh toán nhanh • VietQR / chuyển khoản\n\n"
         "🛡 Bảo mật riêng tư • thông tin được bảo vệ tuyệt đối\n\n\n"
@@ -1578,7 +1580,7 @@ def welcome_text(user_fullname: str) -> str:
         "/game - Chơi game\n\n"
         "/support - Hỗ trợ\n\n"
         "/2fa - Lấy mã 2FA từ secret\n\n"
-        f"🫡 “Mỗi đơn hàng bạn đặt tại {SHOP_NAME} không chỉ là một sản phẩm — đó là sự tin tưởng bạn gửi gắm, "
+        f"🫡 “Mỗi đơn hàng bạn đặt tại {safe_shop} không chỉ là một sản phẩm — đó là sự tin tưởng bạn gửi gắm, "
         "và là cam kết chúng tôi luôn giữ trọn.”\n\n"
     )
 
