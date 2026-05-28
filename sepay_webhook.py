@@ -825,10 +825,14 @@ async def process_payment(payload: Dict[str, Any]) -> None:
         "Đang giao hàng tự động..."
     ))
 
-    if stock_code.upper().startswith("SLOT:"):
+    if stock_code.upper().startswith("SLOT"):
         delivered_at = now_str()
-        participant = await gs_call(mark_slot_participant_paid, canonical_oid, delivered_at)
-        slot_id = stock_code.split(":", 1)[1]
+        try:
+            participant = await gs_call(mark_slot_participant_paid, canonical_oid, delivered_at)
+        except Exception as exc:
+            logger.warning("mark slot participant skipped order=%s: %s", canonical_oid, exc)
+            participant = None
+        slot_id = stock_code.split(":", 1)[1] if ":" in stock_code else stock_code
         email = (participant or {}).get("email") or (order.get("deliver_text") or "").replace("slot_email=", "")
         await gs_call(update_order_cells, rownum, {
             "status": "DELIVERED",

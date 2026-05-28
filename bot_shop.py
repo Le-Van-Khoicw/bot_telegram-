@@ -321,6 +321,12 @@ def product_price_note(product: Dict[str, Any]) -> str:
         f"{duration_days} ngày, còn {remaining_days} ngày, hết hạn {expires_at}."
     )
 
+
+def is_slot_product(product: Dict[str, Any]) -> bool:
+    stock_code = str(product.get("stock_code") or "").strip().upper()
+    product_id = str(product.get("product_id") or "").strip().upper()
+    return stock_code.startswith("SLOT") or product_id.startswith("SLOT")
+
 def price_note_from_values(base_price: int, duration_days: int, remaining_days: Any, expires_at: str) -> str:
     remaining = normalize_int(remaining_days, 0)
     duration = normalize_int(duration_days, 0)
@@ -1829,13 +1835,15 @@ def build_products_menu_kb(
 
     for p in products:
         sc = p["stock_code"]
-        ready = stock_ready.get(sc, 0)
+        slot_mode = is_slot_product(p)
+        ready = 999 if slot_mode else stock_ready.get(sc, 0)
 
         # Format theo yêu cầu: "Tên | 15.000 vnđ | Số Lượng Còn : 5"
         price_text = fmt_price(p["price"]).replace(" đ", " vnđ")
         remaining = p.get("remaining_days")
         date_text = f"|Còn: {remaining} ngày" if p.get("is_time_priced") and str(remaining).isdigit() else ""
-        label = f"{p['name']} | {price_text}{date_text}|SL: {ready}"
+        qty_text = "Slot" if slot_mode else f"SL: {ready}"
+        label = f"{p['name']} | {price_text}{date_text}|{qty_text}"
 
         buttons.append([InlineKeyboardButton(label, callback_data=f"pdetail|{p['product_id']}")])
 
@@ -1857,6 +1865,20 @@ def build_products_menu_kb(
 
 
 def product_detail_text(p: Dict[str, Any], ready_qty: int) -> str:
+    if is_slot_product(p):
+        desc = (p.get("description") or "").strip()
+        if not desc:
+            desc = "Nhập email đăng ký slot, thanh toán xong admin sẽ thêm bạn vào slot."
+        desc = desc.replace("`", "'")
+        return (
+            f"🎟 *{p['name']}*\n\n"
+            f"💰 Giá: *{fmt_price(p['price'])}*\n"
+            f"📝 *Mô tả:*\n{desc}\n"
+            "📌 Trạng thái: ✅ *Đang mở*\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "👇 Bấm mua, bot sẽ hỏi email đăng ký slot rồi tạo mã QR thanh toán."
+        )
+
     status = "✅ *Còn hàng*" if ready_qty > 0 else "⛔ *Hết hàng*"
 
     # ✅ mô tả lấy từ sheet
@@ -2293,14 +2315,17 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not p:
         return await q.edit_message_text("❌ Không tìm thấy sản phẩm.")
 
-    ready_map = await gs_call(stock_count_ready_by_code_cached)
-    ready = ready_map.get(p["stock_code"], 0)
-    stock_prices = await gs_call(
-        stock_price_preview_by_code,
-        {p["stock_code"]: int(p["price"])},
-        {p["stock_code"]: bool(p.get("pricing_enabled", True))},
-    )
-    p = {**p, **stock_prices.get(p["stock_code"], {})}
+    if is_slot_product(p):
+        ready = 999
+    else:
+        ready_map = await gs_call(stock_count_ready_by_code_cached)
+        ready = ready_map.get(p["stock_code"], 0)
+        stock_prices = await gs_call(
+            stock_price_preview_by_code,
+            {p["stock_code"]: int(p["price"])},
+            {p["stock_code"]: bool(p.get("pricing_enabled", True))},
+        )
+        p = {**p, **stock_prices.get(p["stock_code"], {})}
     await q.edit_message_text(
         product_detail_text(p, ready),
         parse_mode="Markdown",
@@ -2377,19 +2402,32 @@ async def handle_slot_email_input(update: Update, context: ContextTypes.DEFAULT_
     if not looks_like_email(email):
         await update.message.reply_text("❌ Email chưa đúng định dạng. Bạn nhập lại giúp mình nhé.")
         return True
-    slot_id = str(pending.get("slot_id") or "").strip()
-    slot = await gs_call(get_slot, slot_id)
-    if not slot or str(slot.get("status") or "OPEN").upper() != "OPEN" or normalize_int(slot.get("remaining"), 0) <= 0:
-        PENDING_SLOT_EMAIL.pop(user_id, None)
-        await update.message.reply_text("❌ Slot này đã đóng hoặc đã đầy.", reply_markup=main_menu_keyboard())
-        return True
+    product_id = str(pending.get("product_id") or "").strip()
+    if product_id:
+        slot = await gs_call(find_product_by_id, product_id)
+        if not slot or not is_slot_product(slot):
+            PENDING_SLOT_EMAIL.pop(user_id, None)
+            await update.message.reply_text("❌ Slot này không còn mở.", reply_markup=main_menu_keyboard())
+            return True
+        slot_id = product_id
+        slot_title = str(slot.get("name") or product_id)
+        stock_code = str(slot.get("stock_code") or f"SLOT:{slot_id}")
+    else:
+        slot_id = str(pending.get("slot_id") or "").strip()
+        slot = await gs_call(get_slot, slot_id)
+        if not slot or str(slot.get("status") or "OPEN").upper() != "OPEN" or normalize_int(slot.get("remaining"), 0) <= 0:
+            PENDING_SLOT_EMAIL.pop(user_id, None)
+            await update.message.reply_text("❌ Slot này đã đóng hoặc đã đầy.", reply_markup=main_menu_keyboard())
+            return True
+        slot_title = str(slot.get("title") or slot_id)
+        stock_code = f"SLOT:{slot_id}"
     order_id = generate_order_id()
     total = normalize_int(slot.get("price"), 0)
     created_at = now_str()
     await gs_call(append_order, {
         "order_id": order_id,
         "user_id": user_id,
-        "stock_code": f"SLOT:{slot_id}",
+        "stock_code": stock_code,
         "qty": 1,
         "total": total,
         "subtotal": total,
@@ -2403,11 +2441,14 @@ async def handle_slot_email_input(update: Update, context: ContextTypes.DEFAULT_
         "deliver_text": f"slot_email={email}",
         "created_at": created_at,
     })
-    await gs_call(append_slot_participant, slot_id, update.effective_user, email, order_id)
+    try:
+        await gs_call(append_slot_participant, slot_id, update.effective_user, email, order_id)
+    except Exception as exc:
+        logger.warning("append slot participant skipped order=%s: %s", order_id, exc)
     PENDING_SLOT_EMAIL.pop(user_id, None)
     caption = build_checkout_caption_with_countdown(
         order_id=order_id,
-        product_name=f"Slot: {slot.get('title') or slot_id}",
+        product_name=f"Slot: {slot_title}",
         unit_price=total,
         qty=1,
         total=total,
@@ -2452,6 +2493,18 @@ async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str):
     p = await gs_call(find_product_by_id, pid)
     if not p:
         return await q.edit_message_text("❌ Không tìm thấy sản phẩm.")
+
+    if is_slot_product(p):
+        PENDING_SLOT_EMAIL[q.from_user.id] = {"product_id": pid}
+        return await q.edit_message_text(
+            (
+                f"🎟 *{escape_markdown(str(p.get('name') or pid), version=1)}*\n"
+                f"Giá: *{fmt_price(normalize_int(p.get('price'), 0))}*\n\n"
+                "Nhập email bạn muốn đăng ký slot:"
+            ),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại sản phẩm", callback_data=f"pdetail_back|{pid}")]]),
+        )
 
     await q.edit_message_text(
         qty_select_text(p),
@@ -3119,15 +3172,19 @@ async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order
     status = (order.get("status", "") or "PENDING").upper()
     stock_code = (order.get("stock_code") or "").strip()
 
-    if stock_code.upper().startswith("SLOT:") and status == "PAID":
+    if stock_code.upper().startswith("SLOT") and status == "PAID":
         delivered_at = now_str()
-        participant = await gs_call(mark_slot_participant_paid, order_id, delivered_at)
+        try:
+            participant = await gs_call(mark_slot_participant_paid, order_id, delivered_at)
+        except Exception as exc:
+            logger.warning("mark slot participant skipped order=%s: %s", order_id, exc)
+            participant = None
         await gs_call(set_order_fields, order_id, {
             "status": "DELIVERED",
             "delivered_at": delivered_at,
             "deliver_text": order.get("deliver_text") or "(SLOT_PAID)",
         })
-        slot_id = stock_code.split(":", 1)[1]
+        slot_id = stock_code.split(":", 1)[1] if ":" in stock_code else stock_code
         email = (participant or {}).get("email") or (order.get("deliver_text") or "").replace("slot_email=", "")
         text = (
             "✅ *ĐÃ GHI NHẬN MUA SLOT*\n"
@@ -3787,7 +3844,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == BTN_PRODUCTS or "sản phẩm" in menu_text or "san pham" in menu_text:
         return await show_products(user.id, context)
     if text == BTN_SLOTS or "mua slot" in menu_text or menu_text == "slot":
-        return await show_slots(user.id, context)
+        return await show_products(user.id, context)
     if text == BTN_SUPPORT or "hỗ trợ" in menu_text or "ho tro" in menu_text:
         return await send_support(user.id, context)
     if text == BTN_ORDERS or "đơn hàng" in menu_text or "don hang" in menu_text:
@@ -3877,7 +3934,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.message.delete()
         except Exception:
             pass
-        return await show_slots(q.from_user.id, context)
+        return await show_products(q.from_user.id, context)
 
     if data == "go_support":
         await q.answer()

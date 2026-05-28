@@ -887,13 +887,6 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
         "promo_awards": promo_awards,
         "promo_settings": promo_settings,
     }
-    try:
-        result["slots"] = load_slots()
-        result["slot_participants"] = load_slot_participants()
-    except Exception as exc:
-        logger.warning("load slot data failed: %s", exc)
-        result["slots"] = []
-        result["slot_participants"] = []
     if include_materials:
         result["materials"] = materials[:pool_limit]
     return result
