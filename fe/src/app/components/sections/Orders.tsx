@@ -92,6 +92,16 @@ function periodLabel(period: RevenuePeriod, selectedDateKey = "") {
   return "năm nay";
 }
 
+function isSlotOrder(order: AnyRow) {
+  return String(order.stock_code || "").trim().toUpperCase().startsWith("SLOT");
+}
+
+function slotEmail(order: AnyRow) {
+  const raw = String(order.deliver_text || "");
+  const match = raw.match(/slot_email\s*=\s*([^\s|,;]+)/i);
+  return match?.[1] || "";
+}
+
 export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<OrderFilter>("ALL");
@@ -222,7 +232,7 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
       if (dateKey(dateValue) !== filterDateKey) return false;
     }
     const user = usersById.get(text(order.user_id));
-    const hay = `${text(order.order_id)} ${text(order.user_id)} ${text(user?.username)} ${text(user?.full_name)} ${text(order.stock_code)}`.toLowerCase();
+    const hay = `${text(order.order_id)} ${text(order.user_id)} ${text(user?.username)} ${text(user?.full_name)} ${text(order.stock_code)} ${slotEmail(order)}`.toLowerCase();
     return !search || hay.includes(search.toLowerCase());
   });
 
@@ -524,12 +534,13 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
 
       <Card className="shadow-sm">
         <CardContent className="p-0 overflow-x-auto">
-          <Table className="min-w-[1060px]">
+          <Table className="min-w-[1180px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Order ID</TableHead>
                 <TableHead>Khách</TableHead>
                 <TableHead>Stock Code</TableHead>
+                <TableHead>Email slot</TableHead>
                 <TableHead className="text-center">SL</TableHead>
                 <TableHead className="text-right">Tổng tiền</TableHead>
                 <TableHead className="text-center">Trạng thái</TableHead>
@@ -545,6 +556,7 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
                 const user = usersById.get(text(order.user_id));
                 const username = text(user?.username);
                 const dieCount = dieCountByOrder.get(orderId) || 0;
+                const email = slotEmail(order);
                 return (
                   <TableRow key={orderId} id={`order-${orderId}`} className={dieCount ? "transition-colors bg-red-50/70 hover:bg-red-50" : "transition-colors"}>
                     <TableCell>
@@ -560,6 +572,13 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
                       </div>
                     </TableCell>
                     <TableCell><code className="text-xs bg-muted px-1.5 py-0.5 rounded">{text(order.stock_code)}</code></TableCell>
+                    <TableCell className="text-xs">
+                      {isSlotOrder(order) ? (
+                        email ? <span className="font-medium text-blue-700">{email}</span> : <span className="text-muted-foreground">Chưa có email</span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-center">{text(order.qty)}</TableCell>
                     <TableCell className="text-right text-emerald-700">{money(order.total)}</TableCell>
                     <TableCell className="text-center"><OrderBadge status={text(order.status)} /></TableCell>
@@ -570,7 +589,7 @@ export function Orders({ data, adminKey, refresh, preset, onBack }: Props) {
                   </TableRow>
                 );
               })}
-              {visible.length === 0 && <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Không có đơn hàng nào</TableCell></TableRow>}
+              {visible.length === 0 && <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">Không có đơn hàng nào</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>

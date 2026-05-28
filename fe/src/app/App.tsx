@@ -232,6 +232,12 @@ export default function App() {
     }, 100);
   };
 
+  const clearNotifications = () => {
+    setNotifications([]);
+    setNewCount(0);
+    localStorage.setItem("notifications", JSON.stringify([]));
+  };
+
   if (!isAuthenticated) {
     return <AdminLogin onLogin={handleLogin} />;
   }
@@ -279,6 +285,7 @@ export default function App() {
         open={notifPanelOpen}
         onClose={() => setNotifPanelOpen(false)}
         onSelectOrder={handleSelectNotification}
+        onClear={clearNotifications}
         newCount={newCount}
       />
       <Sidebar active={section} onChange={(next) => { setSection(next); setNewCount(0); }} onLogout={handleLogout} />
@@ -290,17 +297,15 @@ export default function App() {
               <p className="text-xs text-muted-foreground">{message || "Sẵn sàng quản lý bot bán hàng"}</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {newCount > 0 && (
-                <Button size="sm" variant="secondary" className="gap-2 relative" onClick={() => setNotifPanelOpen(true)}>
-                  <Bell size={15} />
-                  {newCount} thông báo mới
-                  {newCount > 0 && (
-                    <span className="absolute top-0 right-0 -mt-1 -mr-1 w-4 h-4 bg-red-600 text-white text-xs font-bold rounded-full flex items-center justify-center">
-                      {newCount > 9 ? "9+" : newCount}
-                    </span>
-                  )}
-                </Button>
-              )}
+              <Button size="sm" variant={newCount > 0 ? "secondary" : "outline"} className="gap-2 relative" onClick={() => setNotifPanelOpen(true)}>
+                <Bell size={15} />
+                {newCount > 0 ? `${newCount} thông báo mới` : `Thông báo (${notifications.length})`}
+                {newCount > 0 && (
+                  <span className="absolute top-0 right-0 -mt-1 -mr-1 w-4 h-4 bg-red-600 text-white text-xs font-bold rounded-full flex items-center justify-center">
+                    {newCount > 9 ? "9+" : newCount}
+                  </span>
+                )}
+              </Button>
               <Button size="sm" variant="outline" className="gap-2" onClick={() => refresh()} disabled={loading}>
                 <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
                 Làm mới

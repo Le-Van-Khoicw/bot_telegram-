@@ -18,6 +18,7 @@ interface NotificationPanelProps {
   open: boolean;
   onClose: () => void;
   onSelectOrder: (orderId: string) => void;
+  onClear: () => void;
   newCount: number;
 }
 
@@ -26,6 +27,7 @@ export function NotificationPanel({
   open,
   onClose,
   onSelectOrder,
+  onClear,
   newCount,
 }: NotificationPanelProps) {
   if (!open) return null;
@@ -136,9 +138,8 @@ export function NotificationPanel({
               variant="ghost"
               className="w-full text-xs text-muted-foreground"
               onClick={() => {
-                localStorage.setItem("notifications", JSON.stringify([]));
+                onClear();
                 onClose();
-                window.location.reload();
               }}
             >
               Xóa tất cả
