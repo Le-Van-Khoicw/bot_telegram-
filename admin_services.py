@@ -789,10 +789,34 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
         else:
             stock_counts[code]["OTHER"] += 1
 
+    slot_order_counts: Dict[str, Dict[str, int]] = {}
+    for order in orders:
+        code = (order.get("stock_code") or "").strip()
+        if not code.upper().startswith("SLOT"):
+            continue
+        status = (order.get("status") or "").strip().upper()
+        qty = max(1, shop.normalize_int(order.get("qty"), 1))
+        slot_order_counts.setdefault(code, {"PENDING": 0, "SOLD": 0})
+        if status == "PENDING":
+            slot_order_counts[code]["PENDING"] += qty
+        elif status in {"PAID", "DELIVERED"}:
+            slot_order_counts[code]["SOLD"] += qty
+
     product_rows = []
     for product in products:
         code = product.get("stock_code", "")
         counts = stock_counts.get(code, {"READY": 0, "HELD": 0, "SOLD": 0, "OTHER": 0})
+        if shop.is_slot_product(product):
+            limit_count = shop.slot_limit(product)
+            slot_counts = slot_order_counts.get(code, {"PENDING": 0, "SOLD": 0})
+            held = slot_counts.get("PENDING", 0)
+            sold = slot_counts.get("SOLD", 0)
+            counts = {
+                "READY": max(0, limit_count - held - sold) if limit_count > 0 else 0,
+                "HELD": held,
+                "SOLD": sold,
+                "OTHER": 0,
+            }
         product_rows.append({
             "product_id": product.get("product_id", ""),
             "name": product.get("name", ""),

@@ -342,6 +342,12 @@ def slot_remaining(product: Dict[str, Any], taken_counts: Optional[Dict[str, int
     return max(0, limit - normalize_int(taken_counts.get(stock_code), 0))
 
 
+def slot_used(product: Dict[str, Any], taken_counts: Optional[Dict[str, int]] = None) -> int:
+    stock_code = str(product.get("stock_code") or "").strip()
+    taken_counts = taken_counts if taken_counts is not None else slot_taken_count_by_code_cached()
+    return normalize_int(taken_counts.get(stock_code), 0)
+
+
 def slot_taken_count_by_code() -> Dict[str, int]:
     init_sheets()
     counts: Dict[str, int] = {}
@@ -1883,7 +1889,8 @@ def build_products_menu_kb(
         date_text = f"|Còn: {remaining} ngày" if p.get("is_time_priced") and str(remaining).isdigit() else ""
         if slot_mode:
             limit = slot_limit(p)
-            qty_text = f"Slot: {ready}/{limit}" if limit > 0 else "Slot"
+            used = slot_used(p, slot_counts)
+            qty_text = f"Slot: {used}/{limit}" if limit > 0 else "Slot"
         else:
             qty_text = f"SL: {ready}"
         label = f"{p['name']} | {price_text}{date_text}|{qty_text}"
@@ -1910,8 +1917,9 @@ def build_products_menu_kb(
 def product_detail_text(p: Dict[str, Any], ready_qty: int) -> str:
     if is_slot_product(p):
         limit = slot_limit(p)
+        used = normalize_int(p.get("slot_used"), 0)
         remaining = normalize_int(p.get("slot_remaining"), 999999)
-        capacity = f"🎟 Slot: *{remaining}/{limit}* còn trống\n" if limit > 0 else ""
+        capacity = f"🎟 Đã đăng ký: *{used}/{limit}* - còn *{remaining}*\n" if limit > 0 else ""
         status = "✅ *Đang mở*" if remaining > 0 else "⛔ *Đã đầy*"
         desc = (p.get("description") or "").strip()
         if not desc:
@@ -2367,7 +2375,8 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
     if is_slot_product(p):
         slot_counts = await gs_call(slot_taken_count_by_code_cached)
         ready = slot_remaining(p, slot_counts)
-        p = {**p, "slot_taken": normalize_int(slot_counts.get(p["stock_code"]), 0), "slot_remaining": ready}
+        used = slot_used(p, slot_counts)
+        p = {**p, "slot_used": used, "slot_taken": used, "slot_remaining": ready}
     else:
         ready_map = await gs_call(stock_count_ready_by_code_cached)
         ready = ready_map.get(p["stock_code"], 0)
@@ -2555,6 +2564,7 @@ async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str):
     if is_slot_product(p):
         slot_counts = await gs_call(slot_taken_count_by_code_cached)
         remaining = slot_remaining(p, slot_counts)
+        used = slot_used(p, slot_counts)
         if remaining <= 0:
             return await q.edit_message_text(
                 "❌ Slot này đã đủ người rồi.",
@@ -2565,7 +2575,7 @@ async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str):
             (
                 f"🎟 *{escape_markdown(str(p.get('name') or pid), version=1)}*\n"
                 f"Giá: *{fmt_price(normalize_int(p.get('price'), 0))}*\n\n"
-                f"Còn slot: *{remaining}*\n\n"
+                f"Đã đăng ký: *{used}/{slot_limit(p)}* - còn *{remaining}*\n\n"
                 "Nhập email bạn muốn đăng ký slot:"
             ),
             parse_mode="Markdown",
