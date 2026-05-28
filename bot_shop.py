@@ -156,6 +156,7 @@ _CACHE = {
     "products": {"ts": 0.0, "data": []},
     "stock": {"ts": 0.0, "data": {}},
     "promo_settings": {"ts": 0.0, "data": {}},
+    "slot_counts": {"ts": 0.0, "data": {}},
 }
 
 LAST_MAIL_INPUT: Dict[int, str] = {}
@@ -326,6 +327,40 @@ def is_slot_product(product: Dict[str, Any]) -> bool:
     stock_code = str(product.get("stock_code") or "").strip().upper()
     product_id = str(product.get("product_id") or "").strip().upper()
     return stock_code.startswith("SLOT") or product_id.startswith("SLOT")
+
+
+def slot_limit(product: Dict[str, Any]) -> int:
+    return normalize_int(product.get("slot_limit") or product.get("total_slots"), 0)
+
+
+def slot_remaining(product: Dict[str, Any], taken_counts: Optional[Dict[str, int]] = None) -> int:
+    limit = slot_limit(product)
+    if limit <= 0:
+        return 999999
+    stock_code = str(product.get("stock_code") or "").strip()
+    taken_counts = taken_counts if taken_counts is not None else slot_taken_count_by_code_cached()
+    return max(0, limit - normalize_int(taken_counts.get(stock_code), 0))
+
+
+def slot_taken_count_by_code() -> Dict[str, int]:
+    init_sheets()
+    counts: Dict[str, int] = {}
+    for row in get_all_records(_ws_orders):
+        stock_code = str(row.get("stock_code") or "").strip()
+        if not stock_code.upper().startswith("SLOT"):
+            continue
+        status = str(row.get("status") or "").strip().upper()
+        if status in {"PENDING", "PAID", "DELIVERED"}:
+            counts[stock_code] = counts.get(stock_code, 0) + max(1, normalize_int(row.get("qty"), 1))
+    return counts
+
+
+def slot_taken_count_by_code_cached(ttl: int = 10) -> Dict[str, int]:
+    if _ts() - _CACHE["slot_counts"]["ts"] < ttl:
+        return _CACHE["slot_counts"]["data"]
+    data = slot_taken_count_by_code()
+    _CACHE["slot_counts"] = {"ts": _ts(), "data": data}
+    return data
 
 def price_note_from_values(base_price: int, duration_days: int, remaining_days: Any, expires_at: str) -> str:
     remaining = normalize_int(remaining_days, 0)
@@ -1080,6 +1115,7 @@ def load_products() -> List[Dict[str, Any]]:
         duration_days = normalize_int(r.get("duration_days") or r.get("total_days"), 0)
         expires_at = (r.get("expires_at") or r.get("expire_at") or r.get("expiry_at") or "").strip()
         pricing_enabled = normalize_bool(r.get("pricing_enabled"), True)
+        limit = normalize_int(r.get("slot_limit") or r.get("total_slots"), 0)
         pricing = calculate_time_based_price(base_price, duration_days, expires_at if pricing_enabled else "")
 
         # ✅ lấy mô tả riêng từng sản phẩm (từ cột description)
@@ -1096,6 +1132,7 @@ def load_products() -> List[Dict[str, Any]]:
                 "expires_at": pricing["expires_at"],
                 "is_time_priced": pricing["is_time_priced"],
                 "pricing_enabled": pricing_enabled,
+                "slot_limit": limit,
                 "stock_code": stock_code,
                 "description": desc,   # ✅ thêm field
             })
@@ -1830,19 +1867,25 @@ async def send_support(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
 def build_products_menu_kb(
     products: List[Dict[str, Any]],
     stock_ready: Dict[str, int],
+    slot_counts: Optional[Dict[str, int]] = None,
 ) -> InlineKeyboardMarkup:
     buttons: List[List[InlineKeyboardButton]] = []
+    slot_counts = slot_counts or {}
 
     for p in products:
         sc = p["stock_code"]
         slot_mode = is_slot_product(p)
-        ready = 999 if slot_mode else stock_ready.get(sc, 0)
+        ready = slot_remaining(p, slot_counts) if slot_mode else stock_ready.get(sc, 0)
 
         # Format theo yêu cầu: "Tên | 15.000 vnđ | Số Lượng Còn : 5"
         price_text = fmt_price(p["price"]).replace(" đ", " vnđ")
         remaining = p.get("remaining_days")
         date_text = f"|Còn: {remaining} ngày" if p.get("is_time_priced") and str(remaining).isdigit() else ""
-        qty_text = "Slot" if slot_mode else f"SL: {ready}"
+        if slot_mode:
+            limit = slot_limit(p)
+            qty_text = f"Slot: {ready}/{limit}" if limit > 0 else "Slot"
+        else:
+            qty_text = f"SL: {ready}"
         label = f"{p['name']} | {price_text}{date_text}|{qty_text}"
 
         buttons.append([InlineKeyboardButton(label, callback_data=f"pdetail|{p['product_id']}")])
@@ -1866,6 +1909,10 @@ def build_products_menu_kb(
 
 def product_detail_text(p: Dict[str, Any], ready_qty: int) -> str:
     if is_slot_product(p):
+        limit = slot_limit(p)
+        remaining = normalize_int(p.get("slot_remaining"), 999999)
+        capacity = f"🎟 Slot: *{remaining}/{limit}* còn trống\n" if limit > 0 else ""
+        status = "✅ *Đang mở*" if remaining > 0 else "⛔ *Đã đầy*"
         desc = (p.get("description") or "").strip()
         if not desc:
             desc = "Nhập email đăng ký slot, thanh toán xong admin sẽ thêm bạn vào slot."
@@ -1873,8 +1920,9 @@ def product_detail_text(p: Dict[str, Any], ready_qty: int) -> str:
         return (
             f"🎟 *{p['name']}*\n\n"
             f"💰 Giá: *{fmt_price(p['price'])}*\n"
+            f"{capacity}"
             f"📝 *Mô tả:*\n{desc}\n"
-            "📌 Trạng thái: ✅ *Đang mở*\n"
+            f"📌 Trạng thái: {status}\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             "👇 Bấm mua, bot sẽ hỏi email đăng ký slot rồi tạo mã QR thanh toán."
         )
@@ -2257,6 +2305,7 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     try:
         products = await gs_call(load_products_cached)
         stock_ready = await gs_call(stock_count_ready_by_code_cached)
+        slot_counts = await gs_call(slot_taken_count_by_code_cached) if any(is_slot_product(p) for p in products) else {}
         stock_prices = await gs_call(stock_price_preview_for_products, products)
         products = [{**p, **stock_prices.get(p["product_id"], {})} for p in products]
     except Exception as e:
@@ -2304,7 +2353,7 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         chat_id=chat_id,
         text=text,
         parse_mode="Markdown",
-        reply_markup=build_products_menu_kb(products, stock_ready),
+        reply_markup=build_products_menu_kb(products, stock_ready, slot_counts),
     )
 
 async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str):
@@ -2316,7 +2365,9 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await q.edit_message_text("❌ Không tìm thấy sản phẩm.")
 
     if is_slot_product(p):
-        ready = 999
+        slot_counts = await gs_call(slot_taken_count_by_code_cached)
+        ready = slot_remaining(p, slot_counts)
+        p = {**p, "slot_taken": normalize_int(slot_counts.get(p["stock_code"]), 0), "slot_remaining": ready}
     else:
         ready_map = await gs_call(stock_count_ready_by_code_cached)
         ready = ready_map.get(p["stock_code"], 0)
@@ -2409,6 +2460,12 @@ async def handle_slot_email_input(update: Update, context: ContextTypes.DEFAULT_
             PENDING_SLOT_EMAIL.pop(user_id, None)
             await update.message.reply_text("❌ Slot này không còn mở.", reply_markup=main_menu_keyboard())
             return True
+        slot_counts = await gs_call(slot_taken_count_by_code_cached)
+        remaining = slot_remaining(slot, slot_counts)
+        if remaining <= 0:
+            PENDING_SLOT_EMAIL.pop(user_id, None)
+            await update.message.reply_text("❌ Slot này đã đủ người rồi.", reply_markup=main_menu_keyboard())
+            return True
         slot_id = product_id
         slot_title = str(slot.get("name") or product_id)
         stock_code = str(slot.get("stock_code") or f"SLOT:{slot_id}")
@@ -2441,6 +2498,7 @@ async def handle_slot_email_input(update: Update, context: ContextTypes.DEFAULT_
         "deliver_text": f"slot_email={email}",
         "created_at": created_at,
     })
+    _CACHE["slot_counts"]["ts"] = 0.0
     try:
         await gs_call(append_slot_participant, slot_id, update.effective_user, email, order_id)
     except Exception as exc:
@@ -2495,11 +2553,19 @@ async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str):
         return await q.edit_message_text("❌ Không tìm thấy sản phẩm.")
 
     if is_slot_product(p):
+        slot_counts = await gs_call(slot_taken_count_by_code_cached)
+        remaining = slot_remaining(p, slot_counts)
+        if remaining <= 0:
+            return await q.edit_message_text(
+                "❌ Slot này đã đủ người rồi.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại sản phẩm", callback_data=f"pdetail_back|{pid}")]]),
+            )
         PENDING_SLOT_EMAIL[q.from_user.id] = {"product_id": pid}
         return await q.edit_message_text(
             (
                 f"🎟 *{escape_markdown(str(p.get('name') or pid), version=1)}*\n"
                 f"Giá: *{fmt_price(normalize_int(p.get('price'), 0))}*\n\n"
+                f"Còn slot: *{remaining}*\n\n"
                 "Nhập email bạn muốn đăng ký slot:"
             ),
             parse_mode="Markdown",

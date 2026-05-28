@@ -804,6 +804,7 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
             "expires_at": product.get("expires_at", ""),
             "is_time_priced": product.get("is_time_priced", False),
             "pricing_enabled": product.get("pricing_enabled", True),
+            "slot_limit": product.get("slot_limit", 0),
             "description": product.get("description", ""),
             **counts,
         })
@@ -897,7 +898,7 @@ def save_product(data: Dict[str, Any]) -> Dict[str, Any]:
     headers = _headers(shop._ws_products)
     if not headers:
         raise RuntimeError("PRODUCTS thieu header")
-    headers = _ensure_headers(shop._ws_products, ["duration_days", "expires_at", "pricing_enabled"])
+    headers = _ensure_headers(shop._ws_products, ["duration_days", "expires_at", "pricing_enabled", "slot_limit"])
 
     product_id = (data.get("product_id") or "").strip()
     stock_code = (data.get("stock_code") or "").strip()
@@ -915,6 +916,7 @@ def save_product(data: Dict[str, Any]) -> Dict[str, Any]:
         "duration_days": shop.normalize_int(data.get("duration_days"), 0),
         "expires_at": str(data.get("expires_at") or "").strip(),
         "pricing_enabled": "TRUE" if shop.normalize_bool(data.get("pricing_enabled"), True) else "FALSE",
+        "slot_limit": shop.normalize_int(data.get("slot_limit"), 0),
         "description": data.get("description", ""),
     }
 

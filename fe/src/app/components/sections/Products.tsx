@@ -17,7 +17,7 @@ interface Props {
   refresh: () => Promise<void>;
 }
 
-const EMPTY = { product_id: "", name: "", stock_code: "", price: "", duration_days: "", expires_at: "", pricing_enabled: "true", description: "" };
+const EMPTY = { product_id: "", name: "", stock_code: "", price: "", duration_days: "", expires_at: "", pricing_enabled: "true", slot_limit: "", description: "" };
 
 const dateTimeLocal = (value: any) => {
   const raw = text(value);
@@ -51,6 +51,7 @@ export function Products({ data, adminKey, refresh }: Props) {
       duration_days: text(p.duration_days) === "—" ? "" : text(p.duration_days),
       expires_at: dateTimeLocal(p.expires_at),
       pricing_enabled: isPricingEnabled(p.pricing_enabled) ? "true" : "false",
+      slot_limit: text(p.slot_limit) === "—" || Number(p.slot_limit || 0) <= 0 ? "" : text(p.slot_limit),
       description: text(p.description) === "—" ? "" : text(p.description),
     });
     setModalOpen(true);
@@ -162,7 +163,10 @@ export function Products({ data, adminKey, refresh }: Props) {
             <div className="space-y-1"><Label>Product ID</Label><Input value={form.product_id} onChange={(e) => setForm({ ...form, product_id: e.target.value })} placeholder="Bỏ trống để tự tạo" /></div>
             <div className="space-y-1"><Label>Tên sản phẩm</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div className="space-y-1"><Label>Stock Code</Label><Input value={form.stock_code} onChange={(e) => setForm({ ...form, stock_code: e.target.value.toUpperCase() })} /></div>
-            <div className="space-y-1"><Label>Giá gốc</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1"><Label>Giá gốc</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
+              <div className="space-y-1"><Label>Giới hạn slot</Label><Input type="number" min="0" value={form.slot_limit} onChange={(e) => setForm({ ...form, slot_limit: e.target.value })} placeholder="VD: 10, bỏ trống nếu không phải slot" /></div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1"><Label>Tổng số ngày</Label><Input type="number" min="0" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: e.target.value })} placeholder="Ví dụ: 7" /></div>
               <div className="space-y-1"><Label>Hết hạn lúc</Label><Input type="datetime-local" value={form.expires_at} onChange={(e) => setForm({ ...form, expires_at: e.target.value })} /></div>
