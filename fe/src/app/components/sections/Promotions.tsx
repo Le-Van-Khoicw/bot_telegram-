@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Gift, Pencil, Plus } from "lucide-react";
+import { Gift, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -24,7 +24,7 @@ const EMPTY = {
   code: "",
   discount_amount: "20000",
   min_order_total: "0",
-  required_orders: "10",
+  required_orders: "0",
   expires_days: "7",
   status: "ACTIVE",
   note: "",
@@ -62,6 +62,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
   const [menuEnabled, setMenuEnabled] = useState(String(settings.menu_enabled || "").toUpperCase() === "TRUE");
   const [menuText, setMenuText] = useState(String(settings.menu_text || ""));
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const promotions = data?.promotions || [];
   const awards = data?.promo_awards || [];
@@ -82,7 +83,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
       code: blank(promo.code) ? "" : text(promo.code),
       discount_amount: blank(promo.discount_amount || promo.discount_percent) ? "20000" : text(promo.discount_amount || promo.discount_percent),
       min_order_total: blank(promo.min_order_total) ? "0" : text(promo.min_order_total),
-      required_orders: blank(promo.required_orders) ? "10" : text(promo.required_orders),
+      required_orders: "0",
       expires_days: blank(promo.expires_days) ? "7" : text(promo.expires_days),
       status: text(promo.status) === "PAUSED" ? "PAUSED" : "ACTIVE",
       note: blank(promo.note) ? "" : text(promo.note),
@@ -99,6 +100,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
           ...form,
           discount_amount: moneyInputToNumber(form.discount_amount),
           min_order_total: moneyInputToNumber(form.min_order_total),
+          required_orders: "0",
         }),
       });
       toast.success("Da luu khuyen mai");
@@ -106,6 +108,22 @@ export function Promotions({ data, adminKey, refresh }: Props) {
       await refresh();
     } finally {
       setSaving(false);
+    }
+  };
+
+  const deleteCurrent = async () => {
+    const promoId = form.id.trim();
+    if (!promoId) return;
+    const ok = window.confirm(`Xóa mã khuyến mãi ${form.code || promoId}?`);
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await adminApi(`/admin/api/promotions/${encodeURIComponent(promoId)}`, adminKey, { method: "DELETE" });
+      toast.success("Da xoa ma khuyen mai");
+      setOpen(false);
+      await refresh();
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -163,7 +181,6 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                 <TableHead>Ma</TableHead>
                 <TableHead className="text-center">Giam</TableHead>
                 <TableHead className="text-center">Don toi thieu</TableHead>
-                <TableHead className="text-center">Moc don</TableHead>
                 <TableHead className="text-center">Han dung</TableHead>
                 <TableHead className="text-center">Trang thai</TableHead>
                 <TableHead>Ghi chu</TableHead>
@@ -176,7 +193,6 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.code)}</code></TableCell>
                   <TableCell className="text-center">{money(promo.discount_amount || promo.discount_percent)}</TableCell>
                   <TableCell className="text-center">{money(promo.min_order_total)}</TableCell>
-                  <TableCell className="text-center">{text(promo.required_orders)} don</TableCell>
                   <TableCell className="text-center">{text(promo.expires_days)} ngay</TableCell>
                   <TableCell className="text-center"><Badge variant={text(promo.status) === "PAUSED" ? "outline" : "default"}>{statusLabel(promo.status)}</Badge></TableCell>
                   <TableCell className="max-w-[260px] truncate text-muted-foreground">{text(promo.note)}</TableCell>
@@ -185,7 +201,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   </TableCell>
                 </TableRow>
               ))}
-              {!promotions.length && <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">Chua co ma khuyen mai</TableCell></TableRow>}
+              {!promotions.length && <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">Chua co ma khuyen mai</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>
@@ -238,10 +254,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
               <div className="space-y-1"><Label>So tien giam</Label><Input inputMode="numeric" value={form.discount_amount} onChange={(event) => setForm({ ...form, discount_amount: event.target.value })} placeholder="VD: 20k, 20.000" /></div>
               <div className="space-y-1"><Label>Don toi thieu</Label><Input inputMode="numeric" value={form.min_order_total} onChange={(event) => setForm({ ...form, min_order_total: event.target.value })} placeholder="VD: 500k, 500.000" /></div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1"><Label>Moc don (0 = ma nhap tay)</Label><Input type="number" min="0" value={form.required_orders} onChange={(event) => setForm({ ...form, required_orders: event.target.value })} /></div>
-              <div className="space-y-1"><Label>Han ngay</Label><Input type="number" min="1" value={form.expires_days} onChange={(event) => setForm({ ...form, expires_days: event.target.value })} /></div>
-            </div>
+            <div className="space-y-1"><Label>Han ngay</Label><Input type="number" min="1" value={form.expires_days} onChange={(event) => setForm({ ...form, expires_days: event.target.value })} /></div>
             <div className="space-y-1">
               <Label>Trang thai</Label>
               <Select value={form.status} onValueChange={(value) => setForm({ ...form, status: value })}>
@@ -255,8 +268,14 @@ export function Promotions({ data, adminKey, refresh }: Props) {
             <div className="space-y-1"><Label>Ghi chu</Label><Input value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></div>
           </div>
           <DialogFooter>
+            {form.id && (
+              <Button variant="destructive" className="mr-auto gap-1.5" onClick={deleteCurrent} disabled={saving || deleting}>
+                <Trash2 size={15} />
+                {deleting ? "Dang xoa..." : "Xoa"}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setOpen(false)}>Huy</Button>
-            <Button onClick={save} disabled={saving || !form.code}>{saving ? "Dang luu..." : "Luu"}</Button>
+            <Button onClick={save} disabled={saving || deleting || !form.code}>{saving ? "Dang luu..." : "Luu"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -665,6 +665,19 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "promotion": payload, "items": shop.load_promotions()}
 
 
+def delete_promotion(promo_id: str) -> Dict[str, Any]:
+    ws = shop.promotions_ws()
+    rows = shop.get_all_records(ws)
+    target = str(promo_id or "").strip()
+    if not target:
+        raise ValueError("Thieu id khuyen mai")
+    for idx, row in enumerate(rows, start=2):
+        if str(row.get("id") or "").strip() == target:
+            ws.delete_rows(idx)
+            return {"ok": True, "deleted": target, "items": shop.load_promotions()}
+    raise ValueError("Khong tim thay ma khuyen mai")
+
+
 def save_promo_settings(data: Dict[str, Any]) -> Dict[str, Any]:
     ws = shop.promo_settings_ws()
     headers = _headers(ws)

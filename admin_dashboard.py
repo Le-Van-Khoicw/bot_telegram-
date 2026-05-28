@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from admin_services import add_stock, broadcast_stock_update, delete_expense, delete_product, load_gpt_marks, load_materials, release_holds, release_order, save_expense, save_gpt_marks, save_materials, save_product, save_promotion, save_promo_settings, save_slot, snapshot, update_order, update_stock_item
+from admin_services import add_stock, broadcast_stock_update, delete_expense, delete_product, delete_promotion, load_gpt_marks, load_materials, release_holds, release_order, save_expense, save_gpt_marks, save_materials, save_product, save_promotion, save_promo_settings, save_slot, snapshot, update_order, update_stock_item
 from mail_reader import MailReaderError, check_gpt_plus_mail
 
 logger = logging.getLogger("admin_dashboard")
@@ -544,6 +544,14 @@ def register_admin_routes(app: FastAPI) -> None:
         require_admin(request)
         try:
             return await asyncio.to_thread(save_promotion, await request.json())
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.delete("/admin/api/promotions/{promo_id}")
+    async def admin_delete_promotion(promo_id: str, request: Request):
+        require_admin(request)
+        try:
+            return await asyncio.to_thread(delete_promotion, promo_id)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
