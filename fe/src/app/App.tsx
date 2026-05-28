@@ -11,6 +11,7 @@ import { Materials } from "./components/sections/Materials";
 import { GptPlusCheck } from "./components/sections/GptPlusCheck";
 import { Orders } from "./components/sections/Orders";
 import { Promotions } from "./components/sections/Promotions";
+import { Slots } from "./components/sections/Slots";
 import { Users } from "./components/sections/Users";
 import { Button } from "./components/ui/button";
 import { adminApi, money, text, type AdminSnapshot } from "./api";
@@ -266,6 +267,7 @@ export default function App() {
         />
       );
       case "promotions": return <Promotions {...common} />;
+      case "slots": return <Slots {...common} />;
       case "users": return <Users data={data} />;
     }
   };

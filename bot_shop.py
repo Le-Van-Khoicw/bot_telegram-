@@ -70,6 +70,8 @@ TAB_FUL = os.getenv("FULFILLMENTS_TAB", "FULFILLMENTS").strip()
 PROMOTIONS_TAB = os.getenv("PROMOTIONS_TAB", "PROMOTIONS").strip()
 PROMO_AWARDS_TAB = os.getenv("PROMO_AWARDS_TAB", "PROMO_AWARDS").strip()
 PROMO_SETTINGS_TAB = os.getenv("PROMO_SETTINGS_TAB", "PROMO_SETTINGS").strip()
+SLOTS_TAB = os.getenv("SLOTS_TAB", "SLOTS").strip()
+SLOT_PARTICIPANTS_TAB = os.getenv("SLOT_PARTICIPANTS_TAB", "SLOT_PARTICIPANTS").strip()
 _ws_users = None
 
 def parse_admin_ids(raw: str) -> set[int]:
@@ -114,6 +116,7 @@ _ws_ful = None
 
 PENDING_QTY: Dict[int, Dict[str, Any]] = {}  # user_id -> {"product_id": ...}
 PENDING_PROMO_INPUT: Dict[int, Dict[str, str]] = {}  # user_id -> {"order_id": ...}
+PENDING_SLOT_EMAIL: Dict[int, Dict[str, str]] = {}  # user_id -> {"slot_id": ...}
 
 # ✅ Cache for qty selections to avoid long callback_data (Telegram limit 64 bytes)
 # session_id -> {"pid": ..., "created_at": timestamp}
@@ -123,6 +126,8 @@ CHECKOUT_IN_PROGRESS: set[int] = set()
 PROMOTION_HEADERS = ["id", "code", "discount_amount", "min_order_total", "required_orders", "expires_days", "status", "note", "created_at", "updated_at"]
 PROMO_AWARD_HEADERS = ["user_id", "username", "full_name", "promo_id", "cycle", "code", "discount_amount", "min_order_total", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
 PROMO_SETTINGS_HEADERS = ["key", "value", "updated_at"]
+SLOT_HEADERS = ["slot_id", "title", "price", "total_slots", "status", "note", "created_at", "updated_at"]
+SLOT_PARTICIPANT_HEADERS = ["slot_id", "user_id", "username", "full_name", "email", "order_id", "status", "paid_at", "joined_at", "done_at", "note"]
 
 
 BANK_CODE_ALIASES = {
@@ -720,6 +725,12 @@ def promo_awards_ws():
 def promo_settings_ws():
     return ensure_worksheet(PROMO_SETTINGS_TAB, PROMO_SETTINGS_HEADERS)
 
+def slots_ws():
+    return ensure_worksheet(SLOTS_TAB, SLOT_HEADERS)
+
+def slot_participants_ws():
+    return ensure_worksheet(SLOT_PARTICIPANTS_TAB, SLOT_PARTICIPANT_HEADERS)
+
 def load_promo_settings() -> Dict[str, str]:
     cached = _CACHE.get("promo_settings", {})
     if _ts() - float(cached.get("ts") or 0) < 120 and cached.get("data"):
@@ -950,6 +961,105 @@ def mark_promo_award_used(user_id: int, code: str, order_id: str) -> None:
             break
     if cells:
         ws.update_cells(cells, value_input_option="USER_ENTERED")
+
+
+def load_slots() -> List[Dict[str, str]]:
+    rows = get_all_records(slots_ws())
+    rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+    return rows
+
+
+def slot_paid_count(slot_id: str) -> int:
+    target = str(slot_id or "").strip()
+    count = 0
+    for row in get_all_records(slot_participants_ws()):
+        if str(row.get("slot_id") or "").strip() != target:
+            continue
+        if str(row.get("status") or "").strip().upper() in {"PAID", "DONE"}:
+            count += 1
+    return count
+
+
+def open_slots() -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    for slot in load_slots():
+        status = str(slot.get("status") or "OPEN").strip().upper()
+        if status != "OPEN":
+            continue
+        total_slots = normalize_int(slot.get("total_slots"), 0)
+        paid = slot_paid_count(str(slot.get("slot_id") or ""))
+        remaining = max(0, total_slots - paid) if total_slots > 0 else 999999
+        if total_slots > 0 and remaining <= 0:
+            continue
+        result.append({**slot, "paid_count": paid, "remaining": remaining})
+    return result
+
+
+def get_slot(slot_id: str) -> Optional[Dict[str, Any]]:
+    target = str(slot_id or "").strip()
+    for slot in load_slots():
+        if str(slot.get("slot_id") or "").strip() == target:
+            paid = slot_paid_count(target)
+            total_slots = normalize_int(slot.get("total_slots"), 0)
+            remaining = max(0, total_slots - paid) if total_slots > 0 else 999999
+            return {**slot, "paid_count": paid, "remaining": remaining}
+    return None
+
+
+def append_slot_participant(slot_id: str, user, email: str, order_id: str) -> None:
+    ws = slot_participants_ws()
+    headers = headers_map(ws)
+    payload = {
+        "slot_id": slot_id,
+        "user_id": str(user.id),
+        "username": user.username or "",
+        "full_name": user.full_name or "",
+        "email": email,
+        "order_id": order_id,
+        "status": "PENDING",
+        "paid_at": "",
+        "joined_at": now_str(),
+        "done_at": "",
+        "note": "",
+    }
+    row = [""] * len(headers)
+    for key, value in payload.items():
+        col = headers.get(key.lower())
+        if col:
+            row[col - 1] = str(value)
+    ws.append_row(row, value_input_option="USER_ENTERED")
+
+
+def mark_slot_participant_paid(order_id: str, paid_at: str) -> Optional[Dict[str, str]]:
+    ws = slot_participants_ws()
+    values = ws.get_all_values()
+    if len(values) < 2:
+        return None
+    headers = {str(h).strip().lower(): i for i, h in enumerate(values[0], start=1)}
+    c_order = headers.get("order_id")
+    c_status = headers.get("status")
+    c_paid = headers.get("paid_at")
+    if not c_order:
+        return None
+    cells: List[Cell] = []
+    found: Optional[Dict[str, str]] = None
+    for rownum, row in enumerate(values[1:], start=2):
+        oid = row[c_order - 1].strip() if c_order - 1 < len(row) else ""
+        if normalize_order_ref(oid) != normalize_order_ref(order_id):
+            continue
+        found = {}
+        for key, col in headers.items():
+            found[key] = row[col - 1].strip() if col - 1 < len(row) else ""
+        if c_status:
+            cells.append(Cell(rownum, c_status, "PAID"))
+            found["status"] = "PAID"
+        if c_paid:
+            cells.append(Cell(rownum, c_paid, paid_at))
+            found["paid_at"] = paid_at
+        break
+    if cells:
+        ws.update_cells(cells, value_input_option="USER_ENTERED")
+    return found
 
 # ================== PRODUCTS + STOCK ==================
 def load_products() -> List[Dict[str, Any]]:
@@ -1552,12 +1662,13 @@ BTN_ORDERS   = "📦 Đơn hàng".replace("\ufe0f","")
 BTN_GAME     = "🎲 Game".replace("\ufe0f","")
 BTN_2FA      = "🔐 2FA".replace("\ufe0f","")
 BTN_MAIL     = "📬 Đọc mail".replace("\ufe0f","")
+BTN_SLOTS    = "🎟 Mua slot".replace("\ufe0f","")
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     kb = [
         [KeyboardButton(BTN_PRODUCTS), KeyboardButton(BTN_SUPPORT)],
-        [KeyboardButton(BTN_GAME), KeyboardButton(BTN_ORDERS)],
+        [KeyboardButton(BTN_SLOTS), KeyboardButton(BTN_ORDERS)],
         [KeyboardButton(BTN_2FA), KeyboardButton(BTN_MAIL)],
     ]
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
@@ -1616,6 +1727,7 @@ def quick_actions_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🛍 Sản phẩm", callback_data="go_products"),
             InlineKeyboardButton("📦 Đơn hàng", callback_data="go_orders"),
         ],
+        [InlineKeyboardButton("🎟 Mua slot", callback_data="go_slots")],
         [
             InlineKeyboardButton("🔐 2FA", callback_data="2fa_help"),
             InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help"),
@@ -1655,6 +1767,7 @@ def welcome_inline_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🛍 Sản phẩm", callback_data="go_products"),
             InlineKeyboardButton("📦 Đơn hàng", callback_data="go_orders"),
         ],
+        [InlineKeyboardButton("🎟 Mua slot", callback_data="go_slots")],
         [
             InlineKeyboardButton("✨ Cập nhật kho", callback_data="refresh_stock"),
             InlineKeyboardButton("💬 Hỗ trợ", callback_data="go_support"),
@@ -2193,6 +2306,144 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode="Markdown",
         reply_markup=product_detail_kb(pid, ready, int(p["price"])),
     )
+
+
+def slots_menu_kb(slots: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    rows: List[List[InlineKeyboardButton]] = []
+    for slot in slots[:20]:
+        slot_id = str(slot.get("slot_id") or "").strip()
+        title = str(slot.get("title") or slot_id)
+        remaining = normalize_int(slot.get("remaining"), 0)
+        label = f"{title} | {fmt_price(normalize_int(slot.get('price'), 0))} | còn {remaining}"
+        rows.append([InlineKeyboardButton(label[:64], callback_data=f"slot|{slot_id}")])
+    rows.append([InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def show_slots(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        slots = await gs_call(open_slots)
+    except Exception as exc:
+        logger.exception("show_slots error")
+        await context.bot.send_message(chat_id=chat_id, text=f"❌ Lỗi tải slot:\n{exc}", reply_markup=main_menu_keyboard())
+        return
+    if not slots:
+        await context.bot.send_message(chat_id=chat_id, text="🎟 Hiện chưa có slot nào đang mở.", reply_markup=main_menu_keyboard())
+        return
+    lines = ["🎟 *SLOT ĐANG MỞ*", "", "Chọn slot bạn muốn tham gia:"]
+    for slot in slots[:10]:
+        total = normalize_int(slot.get("total_slots"), 0)
+        paid = normalize_int(slot.get("paid_count"), 0)
+        remaining = normalize_int(slot.get("remaining"), 0)
+        total_text = f"{paid}/{total}" if total > 0 else f"{paid}/không giới hạn"
+        lines.append(f"• *{escape_markdown(str(slot.get('title') or ''), version=1)}* - {fmt_price(normalize_int(slot.get('price'), 0))} - còn {remaining} ({total_text})")
+    await context.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="Markdown", reply_markup=slots_menu_kb(slots))
+
+
+async def prompt_slot_email(update: Update, context: ContextTypes.DEFAULT_TYPE, slot_id: str):
+    q = update.callback_query
+    slot = await gs_call(get_slot, slot_id)
+    if not slot or str(slot.get("status") or "OPEN").upper() != "OPEN" or normalize_int(slot.get("remaining"), 0) <= 0:
+        await q.answer("Slot này đã đóng hoặc đã đầy.", show_alert=True)
+        return
+    await q.answer()
+    PENDING_SLOT_EMAIL[q.from_user.id] = {"slot_id": slot_id}
+    try:
+        await q.message.delete()
+    except Exception:
+        pass
+    await context.bot.send_message(
+        chat_id=q.from_user.id,
+        text=(
+            f"🎟 *{escape_markdown(str(slot.get('title') or ''), version=1)}*\n"
+            f"Giá: *{fmt_price(normalize_int(slot.get('price'), 0))}*\n\n"
+            "Nhập email bạn muốn đăng ký slot:"
+        ),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại danh sách slot", callback_data="go_slots")]]),
+    )
+
+
+def looks_like_email(value: str) -> bool:
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", str(value or "").strip()))
+
+
+async def handle_slot_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
+    pending = PENDING_SLOT_EMAIL.get(user_id)
+    if not pending:
+        return False
+    email = (update.message.text or "").strip()
+    if not looks_like_email(email):
+        await update.message.reply_text("❌ Email chưa đúng định dạng. Bạn nhập lại giúp mình nhé.")
+        return True
+    slot_id = str(pending.get("slot_id") or "").strip()
+    slot = await gs_call(get_slot, slot_id)
+    if not slot or str(slot.get("status") or "OPEN").upper() != "OPEN" or normalize_int(slot.get("remaining"), 0) <= 0:
+        PENDING_SLOT_EMAIL.pop(user_id, None)
+        await update.message.reply_text("❌ Slot này đã đóng hoặc đã đầy.", reply_markup=main_menu_keyboard())
+        return True
+    order_id = generate_order_id()
+    total = normalize_int(slot.get("price"), 0)
+    created_at = now_str()
+    await gs_call(append_order, {
+        "order_id": order_id,
+        "user_id": user_id,
+        "stock_code": f"SLOT:{slot_id}",
+        "qty": 1,
+        "total": total,
+        "subtotal": total,
+        "promo_code": "",
+        "promo_discount": 0,
+        "status": "PENDING",
+        "qr_msg_id": "",
+        "paid_at": "",
+        "tx_id": "",
+        "delivered_at": "",
+        "deliver_text": f"slot_email={email}",
+        "created_at": created_at,
+    })
+    await gs_call(append_slot_participant, slot_id, update.effective_user, email, order_id)
+    PENDING_SLOT_EMAIL.pop(user_id, None)
+    caption = build_checkout_caption_with_countdown(
+        order_id=order_id,
+        product_name=f"Slot: {slot.get('title') or slot_id}",
+        unit_price=total,
+        qty=1,
+        total=total,
+        remain_seconds=ORDER_TTL_SECONDS,
+        status_line="⏳ *ĐANG CHỜ THANH TOÁN SLOT*",
+        price_note=f"Email dang ky: {escape_markdown(email, version=1)}",
+        subtotal=total,
+    )
+    qr_url = build_vietqr_image_url(order_id, total)
+    qr_bytes = await fetch_qr_bytes(qr_url, timeout=6)
+    if qr_bytes:
+        bio = io.BytesIO(qr_bytes)
+        bio.name = "vietqr.png"
+        msg = await context.bot.send_photo(chat_id=user_id, photo=bio, caption=caption, parse_mode="Markdown", reply_markup=checkout_keyboard_pending(order_id))
+    else:
+        msg = await context.bot.send_message(
+            chat_id=user_id,
+            text=caption + "\n\n🔗 Nếu ảnh QR không hiện, bấm nút *Mở QR thanh toán* bên dưới.",
+            parse_mode="Markdown",
+            reply_markup=checkout_keyboard_pending_with_qr(order_id, qr_url),
+            disable_web_page_preview=True,
+        )
+    await gs_call(set_order_fields, order_id, {"qr_msg_id": str(msg.message_id)})
+    await schedule_ttl(context.application, user_id, order_id)
+    await notify_admins(
+        context,
+        (
+            "🎟 *Có đơn mua slot mới*\n"
+            f"Order: `{escape_markdown(order_id, version=2)}`\n"
+            f"Slot: `{escape_markdown(slot_id, version=2)}`\n"
+            f"Email: `{escape_markdown(email, version=2)}`\n"
+            f"Khách: `{user_id}`\n"
+            f"Số tiền: *{escape_markdown(fmt_price(total), version=2)}*"
+        ),
+    )
+    return True
 
 async def ask_qty(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: str):
     q = update.callback_query
@@ -2868,6 +3119,41 @@ async def confirm_paid(update: Update, context: ContextTypes.DEFAULT_TYPE, order
     status = (order.get("status", "") or "PENDING").upper()
     stock_code = (order.get("stock_code") or "").strip()
 
+    if stock_code.upper().startswith("SLOT:") and status == "PAID":
+        delivered_at = now_str()
+        participant = await gs_call(mark_slot_participant_paid, order_id, delivered_at)
+        await gs_call(set_order_fields, order_id, {
+            "status": "DELIVERED",
+            "delivered_at": delivered_at,
+            "deliver_text": order.get("deliver_text") or "(SLOT_PAID)",
+        })
+        slot_id = stock_code.split(":", 1)[1]
+        email = (participant or {}).get("email") or (order.get("deliver_text") or "").replace("slot_email=", "")
+        text = (
+            "✅ *ĐÃ GHI NHẬN MUA SLOT*\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"🧾 *Mã đơn:* `{order_id}`\n"
+            f"🎟 *Slot:* `{escape_markdown(slot_id, version=1)}`\n"
+            f"📧 *Email:* `{escape_markdown(email, version=1)}`\n\n"
+            "Admin sẽ thêm email của bạn vào slot và liên hệ khi xong."
+        )
+        try:
+            await q.edit_message_caption(caption=text, parse_mode="Markdown", reply_markup=checkout_keyboard_done())
+        except Exception:
+            await context.bot.send_message(chat_id=q.from_user.id, text=text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+        await notify_admins(
+            context,
+            (
+                "🎟 *Slot đã thanh toán*\n"
+                f"Order: `{escape_markdown(order_id, version=2)}`\n"
+                f"Slot: `{escape_markdown(slot_id, version=2)}`\n"
+                f"Email: `{escape_markdown(email, version=2)}`\n"
+                f"Khách: `{q.from_user.id}`\n"
+                f"Lúc: `{escape_markdown(delivered_at, version=2)}`"
+            ),
+        )
+        return
+
     # Nếu chưa PAID -> thông báo kiểm tra
     if status not in ("PAID", "DELIVERED"):
         await context.bot.send_message(
@@ -3475,6 +3761,8 @@ async def show_account(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user):
 # ================== TEXT ROUTER ==================
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await handle_slot_email_input(update, context):
+        return
     if await handle_promo_code_input(update, context):
         return
     if await handle_custom_qty_input(update, context):
@@ -3498,6 +3786,8 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == BTN_PRODUCTS or "sản phẩm" in menu_text or "san pham" in menu_text:
         return await show_products(user.id, context)
+    if text == BTN_SLOTS or "mua slot" in menu_text or menu_text == "slot":
+        return await show_slots(user.id, context)
     if text == BTN_SUPPORT or "hỗ trợ" in menu_text or "ho tro" in menu_text:
         return await send_support(user.id, context)
     if text == BTN_ORDERS or "đơn hàng" in menu_text or "don hang" in menu_text:
@@ -3581,6 +3871,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return await show_orders(q.from_user.id, context)
 
+    if data == "go_slots":
+        await q.answer()
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        return await show_slots(q.from_user.id, context)
+
     if data == "go_support":
         await q.answer()
         try:
@@ -3657,6 +3955,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("buy|"):
         pid = data.split("|", 1)[1]
         return await ask_qty(update, context, pid)
+
+    if data.startswith("slot|"):
+        slot_id = data.split("|", 1)[1]
+        return await prompt_slot_email(update, context, slot_id)
 
     if data.startswith("qty|"):
         # ✅ FIX: Extract from session cache instead of callback_data

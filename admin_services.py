@@ -676,6 +676,68 @@ def load_promotion_awards() -> List[Dict[str, str]]:
     return rows
 
 
+def load_slots() -> List[Dict[str, str]]:
+    rows = shop.get_all_records(shop.slots_ws())
+    participants = shop.get_all_records(shop.slot_participants_ws())
+    paid_counts: Dict[str, int] = {}
+    for row in participants:
+        status = str(row.get("status") or "").strip().upper()
+        if status in {"PAID", "DONE"}:
+            slot_id = str(row.get("slot_id") or "").strip()
+            paid_counts[slot_id] = paid_counts.get(slot_id, 0) + 1
+    for row in rows:
+        slot_id = str(row.get("slot_id") or "").strip()
+        total = shop.normalize_int(row.get("total_slots"), 0)
+        paid = paid_counts.get(slot_id, 0)
+        row["paid_count"] = str(paid)
+        row["remaining"] = str(max(0, total - paid) if total > 0 else "")
+    rows.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return rows
+
+
+def load_slot_participants() -> List[Dict[str, str]]:
+    rows = shop.get_all_records(shop.slot_participants_ws())
+    rows.sort(key=lambda x: x.get("joined_at") or x.get("paid_at") or "", reverse=True)
+    return rows
+
+
+def save_slot(data: Dict[str, Any]) -> Dict[str, Any]:
+    ws = shop.slots_ws()
+    headers = _headers(ws)
+    slot_id = str(data.get("slot_id") or "").strip() or f"SLOT{shop.now_dt().strftime('%Y%m%d%H%M%S')}{random.randint(100, 999)}"
+    title = str(data.get("title") or "").strip()
+    if not title:
+        raise ValueError("Can co ten slot")
+    status = str(data.get("status") or "OPEN").strip().upper()
+    if status not in {"OPEN", "CLOSED", "FULL"}:
+        status = "OPEN"
+    now = shop.now_str()
+    payload = {
+        "slot_id": slot_id,
+        "title": title,
+        "price": max(0, shop.normalize_int(data.get("price"), 0)),
+        "total_slots": max(0, shop.normalize_int(data.get("total_slots"), 0)),
+        "status": status,
+        "note": str(data.get("note") or ""),
+        "created_at": str(data.get("created_at") or now),
+        "updated_at": now,
+    }
+    values = ws.get_all_values()
+    c_id = headers.get("slot_id")
+    target_row = 0
+    for rownum, row in enumerate(values[1:], start=2):
+        current = row[c_id - 1].strip() if c_id and c_id - 1 < len(row) else ""
+        if current == slot_id:
+            target_row = rownum
+            break
+    row_values = _row_from_headers(headers, payload)
+    if target_row:
+        ws.update(f"A{target_row}:H{target_row}", [row_values], value_input_option="USER_ENTERED")
+    else:
+        ws.append_row(row_values, value_input_option="USER_ENTERED")
+    return {"ok": True, "slot": payload, "items": load_slots()}
+
+
 def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool = False) -> Dict[str, Any]:
     shop.init_sheets()
     products = shop.load_products()
@@ -825,6 +887,13 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
         "promo_awards": promo_awards,
         "promo_settings": promo_settings,
     }
+    try:
+        result["slots"] = load_slots()
+        result["slot_participants"] = load_slot_participants()
+    except Exception as exc:
+        logger.warning("load slot data failed: %s", exc)
+        result["slots"] = []
+        result["slot_participants"] = []
     if include_materials:
         result["materials"] = materials[:pool_limit]
     return result

@@ -28,6 +28,8 @@ export interface AdminSnapshot {
   promotions?: AnyRow[];
   promo_awards?: AnyRow[];
   promo_settings?: AnyRow;
+  slots?: AnyRow[];
+  slot_participants?: AnyRow[];
 }
 
 export async function adminApi<T>(path: string, key: string, options: RequestInit = {}): Promise<T> {

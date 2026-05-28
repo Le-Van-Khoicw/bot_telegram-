@@ -41,6 +41,7 @@ ORDERS_TAB = os.getenv("ORDERS_TAB", "ORDERS").strip()
 POOL_TAB = os.getenv("POOL_TAB", "POOL").strip()
 RES_TAB = os.getenv("RESERVATIONS_TAB", "RESERVATIONS").strip()
 FUL_TAB = os.getenv("FULFILLMENTS_TAB", "FULFILLMENTS").strip()
+SLOT_PARTICIPANTS_TAB = os.getenv("SLOT_PARTICIPANTS_TAB", "SLOT_PARTICIPANTS").strip()
 SUPPORT_TELE_LINK = os.getenv("SUPPORT_TELE_LINK", "https://t.me/khoivancw").strip()
 SHEETS_LOCK = asyncio.Lock()
 
@@ -387,6 +388,44 @@ def update_order_cells(rownum: int, updates: Dict[str, Any]) -> None:
 
     if cells:
         ws_orders.update_cells(cells, value_input_option="USER_ENTERED")
+
+
+def mark_slot_participant_paid(order_id: str, paid_at: str) -> Optional[Dict[str, str]]:
+    init_gsheet()
+    try:
+        ws = gs_sheet.worksheet(SLOT_PARTICIPANTS_TAB)
+    except Exception:
+        return None
+    values = ws.get_all_values()
+    if len(values) < 2:
+        return None
+    headers = normalize_headers(values[0])
+    c_order = headers.get("order_id")
+    c_status = headers.get("status")
+    c_paid = headers.get("paid_at")
+    if c_order is None:
+        return None
+    cells: List[Cell] = []
+    found: Optional[Dict[str, str]] = None
+    for i in range(1, len(values)):
+        rownum = i + 1
+        row = values[i]
+        oid = (row[c_order] or "").strip() if c_order < len(row) else ""
+        if norm_oid(oid) != norm_oid(order_id):
+            continue
+        found = {}
+        for key, col in headers.items():
+            found[key] = row[col].strip() if col < len(row) else ""
+        if c_status is not None:
+            cells.append(Cell(rownum, c_status + 1, "PAID"))
+            found["status"] = "PAID"
+        if c_paid is not None:
+            cells.append(Cell(rownum, c_paid + 1, paid_at))
+            found["paid_at"] = paid_at
+        break
+    if cells:
+        ws.update_cells(cells, value_input_option="USER_ENTERED")
+    return found
 
 
 
@@ -785,6 +824,43 @@ async def process_payment(payload: Dict[str, Any]) -> None:
         f"TX: {txn_id}\n"
         "Đang giao hàng tự động..."
     ))
+
+    if stock_code.upper().startswith("SLOT:"):
+        delivered_at = now_str()
+        participant = await gs_call(mark_slot_participant_paid, canonical_oid, delivered_at)
+        slot_id = stock_code.split(":", 1)[1]
+        email = (participant or {}).get("email") or (order.get("deliver_text") or "").replace("slot_email=", "")
+        await gs_call(update_order_cells, rownum, {
+            "status": "DELIVERED",
+            "delivered_at": delivered_at,
+            "deliver_text": order.get("deliver_text") or f"slot_email={email}",
+        })
+        if tg_bot:
+            try:
+                await tg_bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        "✅ Đã ghi nhận thanh toán slot.\n\n"
+                        f"Order: {canonical_oid}\n"
+                        f"Slot: {slot_id}\n"
+                        f"Email: {email}\n\n"
+                        "Admin sẽ thêm email của bạn vào slot và liên hệ khi xong."
+                    ),
+                    reply_markup=kb_after_delivery(),
+                    disable_web_page_preview=True,
+                )
+            except Exception as exc:
+                logger.warning("send slot paid message failed order=%s: %s", canonical_oid, exc)
+        asyncio.create_task(notify_admins(
+            "🎟 Slot đã thanh toán\n"
+            f"Order: {canonical_oid}\n"
+            f"Khách: {user_id}\n"
+            f"Slot: {slot_id}\n"
+            f"Email: {email}\n"
+            f"Số tiền: {money_vnd(amount)}\n"
+            f"TX: {txn_id}"
+        ))
+        return
 
     # 3) take HELD -> SOLD and get secrets
     #    (Fix2: dùng canonical_oid; Fix1: pool function sẽ so bằng norm_oid)
