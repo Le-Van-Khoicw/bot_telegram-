@@ -18,6 +18,7 @@ logger = logging.getLogger("MAIN_ORCHESTRATOR")
 
 app = FastAPI()
 telegram_app = None
+telegram_webhook_task = None
 PROCESSED_UPDATE_IDS = OrderedDict()
 register_admin_routes(app)
 
@@ -107,9 +108,32 @@ def run_bot():
         loop.close()
 
 
+async def set_webhook_with_retry(webhook_url: str, attempts: int = 12) -> None:
+    if telegram_app is None:
+        return
+    for attempt in range(1, attempts + 1):
+        try:
+            await telegram_app.bot.set_webhook(webhook_url, drop_pending_updates=True)
+            logger.info("Telegram webhook is active: %s", webhook_url)
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            wait_seconds = min(60, 5 * attempt)
+            logger.warning(
+                "Telegram set_webhook failed attempt %s/%s: %s. Retrying in %ss",
+                attempt,
+                attempts,
+                exc,
+                wait_seconds,
+            )
+            await asyncio.sleep(wait_seconds)
+    logger.error("Telegram set_webhook failed after %s attempts; app stays online for Render health checks.", attempts)
+
+
 @app.on_event("startup")
 async def startup_telegram_webhook():
-    global telegram_app
+    global telegram_app, telegram_webhook_task
     base_url = public_base_url()
     if not base_url:
         logger.info("No public URL configured; Telegram bot will use polling fallback.")
@@ -120,14 +144,21 @@ async def startup_telegram_webhook():
     await telegram_app.initialize()
     await setup_bot_commands(telegram_app)
     set_telegram_bot(telegram_app.bot)
-    await telegram_app.bot.set_webhook(webhook_url, drop_pending_updates=True)
     await telegram_app.start()
-    logger.info("Telegram webhook is active: %s", webhook_url)
+    telegram_webhook_task = asyncio.create_task(set_webhook_with_retry(webhook_url))
+    logger.info("Telegram app started; webhook registration is running in background: %s", webhook_url)
 
 
 @app.on_event("shutdown")
 async def shutdown_telegram_webhook():
-    global telegram_app
+    global telegram_app, telegram_webhook_task
+    if telegram_webhook_task is not None:
+        telegram_webhook_task.cancel()
+        try:
+            await telegram_webhook_task
+        except asyncio.CancelledError:
+            pass
+        telegram_webhook_task = None
     if telegram_app is None:
         return
     await telegram_app.stop()
