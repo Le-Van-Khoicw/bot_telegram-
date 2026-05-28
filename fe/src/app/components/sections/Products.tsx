@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Megaphone, Package, Pencil, Plus } from "lucide-react";
+import { Loader2, Megaphone, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent } from "../ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Button } from "../ui/button";
@@ -34,6 +34,7 @@ export function Products({ data, adminKey, refresh }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ ...EMPTY });
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [broadcasting, setBroadcasting] = useState(false);
 
   const openAdd = () => {
@@ -63,6 +64,22 @@ export function Products({ data, adminKey, refresh }: Props) {
       await refresh();
     } finally {
       setSaving(false);
+    }
+  };
+
+  const deleteCurrent = async () => {
+    const productId = form.product_id.trim();
+    if (!productId) return;
+    const ok = window.confirm(`Xóa sản phẩm ${form.name || productId}? Sản phẩm sẽ biến mất khỏi menu bot.`);
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await adminApi(`/admin/api/products/${encodeURIComponent(productId)}`, adminKey, { method: "DELETE" });
+      toast.success("Đã xóa sản phẩm");
+      setModalOpen(false);
+      await refresh();
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -161,8 +178,14 @@ export function Products({ data, adminKey, refresh }: Props) {
             <div className="space-y-1"><Label>Mô tả</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
           </div>
           <DialogFooter>
+            {form.product_id && (
+              <Button variant="destructive" className="mr-auto gap-1.5" onClick={deleteCurrent} disabled={deleting || saving}>
+                <Trash2 size={15} />
+                {deleting ? "Đang xóa..." : "Xóa"}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setModalOpen(false)}>Hủy</Button>
-            <Button onClick={save} disabled={saving || !form.name || !form.stock_code}>{saving ? "Đang lưu..." : "Lưu"}</Button>
+            <Button onClick={save} disabled={saving || deleting || !form.name || !form.stock_code}>{saving ? "Đang lưu..." : "Lưu"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -942,6 +942,30 @@ def save_product(data: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "product_id": product_id}
 
 
+def delete_product(product_id: str) -> Dict[str, Any]:
+    shop.init_sheets()
+    headers = _headers(shop._ws_products)
+    if not headers:
+        raise RuntimeError("PRODUCTS thieu header")
+    product_id = str(product_id or "").strip()
+    if not product_id:
+        raise ValueError("Can co product_id")
+
+    values = shop._ws_products.get_all_values()
+    id_col = headers.get("product_id")
+    if not id_col:
+        raise RuntimeError("PRODUCTS thieu cot product_id")
+
+    for rownum, row in enumerate(values[1:], start=2):
+        current = row[id_col - 1].strip() if id_col - 1 < len(row) else ""
+        if current == product_id:
+            shop._ws_products.delete_rows(rownum)
+            shop._CACHE["products"]["ts"] = 0.0
+            return {"ok": True, "product_id": product_id}
+
+    raise ValueError("Khong tim thay san pham")
+
+
 def add_stock(data: Dict[str, Any]) -> Dict[str, Any]:
     shop.init_sheets()
     headers = _headers(shop._ws_pool)
