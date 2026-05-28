@@ -35,6 +35,26 @@ const blank = (value: unknown) => {
   return normalized === "—" || normalized === "â€”";
 };
 
+const moneyInputToNumber = (value: string) => {
+  let raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "0";
+  let multiplier = 1;
+  if (/(k|nghin|nghìn)$/.test(raw)) {
+    multiplier = 1000;
+    raw = raw.replace(/(k|nghin|nghìn)$/, "").trim();
+  } else if (/(m|tr|trieu|triệu)$/.test(raw)) {
+    multiplier = 1000000;
+    raw = raw.replace(/(m|tr|trieu|triệu)$/, "").trim();
+  }
+  if (multiplier > 1) {
+    const num = Number(raw.replace(/[^0-9,.]/g, "").replace(",", "."));
+    return String(Math.max(0, Math.round((Number.isFinite(num) ? num : 0) * multiplier)));
+  }
+  return raw.replace(/[^\d]/g, "") || "0";
+};
+
+const statusLabel = (status: unknown) => text(status).toUpperCase() === "PAUSED" ? "Tắt" : "Bật";
+
 export function Promotions({ data, adminKey, refresh }: Props) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ ...EMPTY });
@@ -73,7 +93,14 @@ export function Promotions({ data, adminKey, refresh }: Props) {
   const save = async () => {
     setSaving(true);
     try {
-      await adminApi("/admin/api/promotions", adminKey, { method: "POST", body: JSON.stringify(form) });
+      await adminApi("/admin/api/promotions", adminKey, {
+        method: "POST",
+        body: JSON.stringify({
+          ...form,
+          discount_amount: moneyInputToNumber(form.discount_amount),
+          min_order_total: moneyInputToNumber(form.min_order_total),
+        }),
+      });
       toast.success("Da luu khuyen mai");
       setOpen(false);
       await refresh();
@@ -151,7 +178,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   <TableCell className="text-center">{money(promo.min_order_total)}</TableCell>
                   <TableCell className="text-center">{text(promo.required_orders)} don</TableCell>
                   <TableCell className="text-center">{text(promo.expires_days)} ngay</TableCell>
-                  <TableCell className="text-center"><Badge variant={text(promo.status) === "PAUSED" ? "outline" : "default"}>{text(promo.status)}</Badge></TableCell>
+                  <TableCell className="text-center"><Badge variant={text(promo.status) === "PAUSED" ? "outline" : "default"}>{statusLabel(promo.status)}</Badge></TableCell>
                   <TableCell className="max-w-[260px] truncate text-muted-foreground">{text(promo.note)}</TableCell>
                   <TableCell className="text-center">
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(promo)}><Pencil size={14} /></Button>
@@ -208,8 +235,8 @@ export function Promotions({ data, adminKey, refresh }: Props) {
           <div className="space-y-3 py-2">
             <div className="space-y-1"><Label>Ma goc</Label><Input value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} placeholder="THANK10" /></div>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1"><Label>So tien giam</Label><Input type="number" min="1" value={form.discount_amount} onChange={(event) => setForm({ ...form, discount_amount: event.target.value })} /></div>
-              <div className="space-y-1"><Label>Don toi thieu</Label><Input type="number" min="0" value={form.min_order_total} onChange={(event) => setForm({ ...form, min_order_total: event.target.value })} /></div>
+              <div className="space-y-1"><Label>So tien giam</Label><Input inputMode="numeric" value={form.discount_amount} onChange={(event) => setForm({ ...form, discount_amount: event.target.value })} placeholder="VD: 20k, 20.000" /></div>
+              <div className="space-y-1"><Label>Don toi thieu</Label><Input inputMode="numeric" value={form.min_order_total} onChange={(event) => setForm({ ...form, min_order_total: event.target.value })} placeholder="VD: 500k, 500.000" /></div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1"><Label>Moc don (0 = ma nhap tay)</Label><Input type="number" min="0" value={form.required_orders} onChange={(event) => setForm({ ...form, required_orders: event.target.value })} /></div>
@@ -220,8 +247,8 @@ export function Promotions({ data, adminKey, refresh }: Props) {
               <Select value={form.status} onValueChange={(value) => setForm({ ...form, status: value })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ACTIVE">ACTIVE</SelectItem>
-                  <SelectItem value="PAUSED">PAUSED</SelectItem>
+                  <SelectItem value="ACTIVE">Bật - mã đang chạy</SelectItem>
+                  <SelectItem value="PAUSED">Tắt - ngưng mã</SelectItem>
                 </SelectContent>
               </Select>
             </div>

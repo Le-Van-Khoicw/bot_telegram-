@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import re
 import string
 from typing import Any, Dict, List
 
@@ -601,13 +602,33 @@ def delete_expense(expense_id: str) -> Dict[str, Any]:
     return {"ok": False, "deleted": "", "items": rows, "error": "Không tìm thấy khoản chi"}
 
 
+def _money_input(value: Any, default: int = 0) -> int:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return default
+    multiplier = 1
+    if re.search(r"(k|nghin|nghìn)\s*$", raw):
+        multiplier = 1000
+        raw = re.sub(r"(k|nghin|nghìn)\s*$", "", raw).strip()
+    elif re.search(r"(m|tr|trieu|triệu)\s*$", raw):
+        multiplier = 1000000
+        raw = re.sub(r"(m|tr|trieu|triệu)\s*$", "", raw).strip()
+    if multiplier > 1:
+        number_text = re.sub(r"[^0-9,.]", "", raw).replace(",", ".")
+        try:
+            return int(float(number_text) * multiplier)
+        except Exception:
+            return default
+    return shop.normalize_int(raw, default)
+
+
 def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
     ws = shop.promotions_ws()
     headers = _headers(ws)
     promo_id = str(data.get("id") or "").strip() or f"PROMO{shop.now_dt().strftime('%Y%m%d%H%M%S')}{random.randint(100, 999)}"
     code = str(data.get("code") or "").strip().upper()
-    discount = max(1, shop.normalize_int(data.get("discount_amount") or data.get("discount_percent"), 0))
-    min_order_total = max(0, shop.normalize_int(data.get("min_order_total"), 0))
+    discount = max(1, _money_input(data.get("discount_amount") or data.get("discount_percent"), 0))
+    min_order_total = max(0, _money_input(data.get("min_order_total"), 0))
     required = max(0, shop.normalize_int(data.get("required_orders"), 0))
     expires_days = max(1, shop.normalize_int(data.get("expires_days"), 7))
     status = str(data.get("status") or "ACTIVE").strip().upper()
