@@ -267,11 +267,25 @@ def parse_product_dt(value: Any) -> Optional[datetime]:
     if not raw:
         return None
     raw = raw.replace("T", " ")
+    raw = re.sub(r"\s+", " ", raw)
+    meridiem_match = re.search(r"\s+(SA|CH|AM|PM)$", raw, re.IGNORECASE)
+    meridiem = meridiem_match.group(1).upper() if meridiem_match else ""
+    if meridiem:
+        raw = raw[:meridiem_match.start()].strip()
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
         raw = f"{raw} 23:59:59"
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+    if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", raw):
+        raw = f"{raw} 23:59:59"
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M"):
         try:
-            return datetime.strptime(raw, fmt)
+            parsed = datetime.strptime(raw, fmt)
+            if meridiem in {"SA", "AM"}:
+                if parsed.hour == 12:
+                    parsed = parsed.replace(hour=0)
+            elif meridiem in {"CH", "PM"}:
+                if parsed.hour < 12:
+                    parsed = parsed.replace(hour=parsed.hour + 12)
+            return parsed
         except Exception:
             pass
     return None
