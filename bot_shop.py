@@ -314,12 +314,17 @@ def product_price_note(product: Dict[str, Any]) -> str:
     remaining_days = normalize_int(product.get("remaining_days"), 0)
     duration_days = normalize_int(product.get("duration_days"), 0)
     base_price = normalize_int(product.get("base_price"), normalize_int(product.get("price"), 0))
+    current_price = normalize_int(product.get("price"), 0)
     expires_at = str(product.get("expires_at") or "").strip()
     if remaining_days <= 0:
-        return f"⏳ Giá theo hạn sử dụng: sản phẩm đã hết date ({expires_at})."
+        return f"⏳ Giá theo hạn sử dụng: sản phẩm đã hết date ({expires_at}), giá hiện tại {fmt_price(current_price)}."
+    tomorrow_days = max(0, remaining_days - 1)
+    tomorrow_billable_days = min(tomorrow_days, duration_days)
+    tomorrow_price = round(base_price * tomorrow_billable_days / duration_days) if tomorrow_billable_days > 0 else 0
     return (
-        f"⏳ Giá tự giảm theo hạn sử dụng: giá gốc {fmt_price(base_price)} / "
-        f"{duration_days} ngày, còn {remaining_days} ngày, hết hạn {expires_at}."
+        f"⏳ Giá tự giảm theo hạn sử dụng: hôm nay còn {remaining_days}/{duration_days} ngày = "
+        f"{fmt_price(current_price)}. Ngày mai còn {tomorrow_days} ngày = {fmt_price(tomorrow_price)}. "
+        f"Hết hạn {expires_at}."
     )
 
 
@@ -374,9 +379,14 @@ def price_note_from_values(base_price: int, duration_days: int, remaining_days: 
     base = normalize_int(base_price, 0)
     if base <= 0 or duration <= 0 or not expires_at:
         return ""
+    current_billable_days = min(remaining, duration)
+    current_price = round(base * current_billable_days / duration) if current_billable_days > 0 else 0
     if remaining <= 0:
-        return f"Giá theo hạn sử dụng: item đã hết date ({expires_at})."
-    return f"Giá tự giảm theo hạn sử dụng: giá gốc {fmt_price(base)} / {duration} ngày, còn {remaining} ngày, hết hạn {expires_at}."
+        return f"Giá theo hạn sử dụng: item đã hết date ({expires_at}), giá hiện tại {fmt_price(current_price)}."
+    tomorrow = max(0, remaining - 1)
+    tomorrow_billable_days = min(tomorrow, duration)
+    tomorrow_price = round(base * tomorrow_billable_days / duration) if tomorrow_billable_days > 0 else 0
+    return f"Giá tự giảm theo hạn sử dụng: hôm nay còn {remaining}/{duration} ngày = {fmt_price(current_price)}. Ngày mai còn {tomorrow} ngày = {fmt_price(tomorrow_price)}. Hết hạn {expires_at}."
 
 def stock_item_pricing(row: List[str], headers: Dict[str, int], fallback_price: int = 0, enable_time_pricing: bool = True) -> Dict[str, Any]:
     def cell(key: str) -> str:
