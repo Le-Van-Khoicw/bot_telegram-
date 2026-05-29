@@ -3,6 +3,8 @@ import os
 import random
 import re
 import string
+import time
+from copy import deepcopy
 from typing import Any, Dict, List
 
 import requests
@@ -21,6 +23,12 @@ logger = logging.getLogger("admin_services")
 
 _firebase_ready = False
 _firestore_client = None
+_SNAPSHOT_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None, "key": ""}
+SNAPSHOT_CACHE_SECONDS = int(os.getenv("ADMIN_SNAPSHOT_CACHE_SECONDS", "45"))
+
+
+def invalidate_snapshot_cache() -> None:
+    _SNAPSHOT_CACHE.update({"ts": 0.0, "data": None, "key": ""})
 
 
 def _records(ws) -> List[Dict[str, str]]:
@@ -223,6 +231,7 @@ def save_gpt_marks(data: Dict[str, Any]) -> Dict[str, Any]:
     blank = [""] * len(GPT_MARK_HEADERS)
     payload = rows + [blank for _ in range(target_rows - len(rows))]
     ws.update(f"A1:F{target_rows}", payload, value_input_option="RAW")
+    invalidate_snapshot_cache()
     return {
         "ok": True,
         "saved": len(rows) - 1,
@@ -464,6 +473,7 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
     try:
         firestore_result = _save_materials_firestore(data)
         if firestore_result.get("firebase"):
+            invalidate_snapshot_cache()
             return firestore_result
     except Exception as exc:
         logger.warning("save MATERIALS vao Firestore loi, fallback sang Google Sheet: %s", exc)
@@ -516,6 +526,7 @@ def save_materials(data: Dict[str, Any]) -> Dict[str, Any]:
         dict(zip(MATERIALS_HEADERS, row))
         for row in rows[1:]
     ]
+    invalidate_snapshot_cache()
     return {"ok": True, "saved": len(rows) - 1, "items": items}
 
 
@@ -586,6 +597,7 @@ def save_expense(data: Dict[str, Any]) -> Dict[str, Any]:
         ws.update(f"A{row_index}:G{row_index}", [values], value_input_option="USER_ENTERED")
     else:
         ws.append_row(values, value_input_option="USER_ENTERED")
+    invalidate_snapshot_cache()
     return {"ok": True, "expense": row_data, "items": load_expenses()}
 
 
@@ -598,6 +610,7 @@ def delete_expense(expense_id: str) -> Dict[str, Any]:
     for idx, row in enumerate(rows, start=2):
         if str(row.get("id") or "").strip() == target:
             ws.delete_rows(idx)
+            invalidate_snapshot_cache()
             return {"ok": True, "deleted": target, "items": load_expenses()}
     return {"ok": False, "deleted": "", "items": rows, "error": "Không tìm thấy khoản chi"}
 
@@ -662,6 +675,7 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
         ws.update(f"A{target_row}:{chr(64 + len(headers))}{target_row}", [row_values], value_input_option="USER_ENTERED")
     else:
         ws.append_row(row_values, value_input_option="USER_ENTERED")
+    invalidate_snapshot_cache()
     return {"ok": True, "promotion": payload, "items": shop.load_promotions()}
 
 
@@ -674,6 +688,7 @@ def delete_promotion(promo_id: str) -> Dict[str, Any]:
     for idx, row in enumerate(rows, start=2):
         if str(row.get("id") or "").strip() == target:
             ws.delete_rows(idx)
+            invalidate_snapshot_cache()
             return {"ok": True, "deleted": target, "items": shop.load_promotions()}
     raise ValueError("Khong tim thay ma khuyen mai")
 
@@ -690,6 +705,7 @@ def save_promo_settings(data: Dict[str, Any]) -> Dict[str, Any]:
         payload.append([str(row.get(h) or "") for h in shop.PROMO_SETTINGS_HEADERS])
     ws.update(f"A1:C{len(payload)}", payload, value_input_option="USER_ENTERED")
     shop._CACHE["promo_settings"] = {"ts": 0.0, "data": {}}
+    invalidate_snapshot_cache()
     return {"ok": True, "settings": shop.load_promo_settings()}
 
 
@@ -769,10 +785,11 @@ def save_slot(data: Dict[str, Any]) -> Dict[str, Any]:
         ws.update(f"A{target_row}:H{target_row}", [row_values], value_input_option="USER_ENTERED")
     else:
         ws.append_row(row_values, value_input_option="USER_ENTERED")
+    invalidate_snapshot_cache()
     return {"ok": True, "slot": payload, "items": load_slots()}
 
 
-def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool = False) -> Dict[str, Any]:
+def _snapshot_uncached(limit: int = 100, pool_limit: int = 2000, include_materials: bool = False) -> Dict[str, Any]:
     shop.init_sheets()
     products = shop.load_products()
     pool = _records(shop._ws_pool)
@@ -951,6 +968,29 @@ def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool =
     return result
 
 
+def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool = False) -> Dict[str, Any]:
+    key = f"{int(limit or 100)}:{int(pool_limit or 2000)}:{bool(include_materials)}"
+    now = time.time()
+    cached = _SNAPSHOT_CACHE.get("data")
+    if cached and _SNAPSHOT_CACHE.get("key") == key and now - float(_SNAPSHOT_CACHE.get("ts") or 0) < SNAPSHOT_CACHE_SECONDS:
+        result = deepcopy(cached)
+        result["cache_status"] = "fresh"
+        return result
+    try:
+        result = _snapshot_uncached(limit, pool_limit, include_materials)
+        result["cache_status"] = "live"
+        _SNAPSHOT_CACHE.update({"ts": now, "data": deepcopy(result), "key": key})
+        return result
+    except Exception as exc:
+        if cached:
+            logger.warning("snapshot live load failed, returning stale cache: %s", exc)
+            result = deepcopy(cached)
+            result["cache_status"] = "stale"
+            result["cache_error"] = str(exc)
+            return result
+        raise
+
+
 def save_product(data: Dict[str, Any]) -> Dict[str, Any]:
     shop.init_sheets()
     headers = _headers(shop._ws_products)
@@ -999,6 +1039,7 @@ def save_product(data: Dict[str, Any]) -> Dict[str, Any]:
         shop._ws_products.append_row(_row_from_headers(headers, payload), value_input_option="USER_ENTERED")
 
     shop._CACHE["products"]["ts"] = 0.0
+    invalidate_snapshot_cache()
     return {"ok": True, "product_id": product_id}
 
 
@@ -1021,6 +1062,7 @@ def delete_product(product_id: str) -> Dict[str, Any]:
         if current == product_id:
             shop._ws_products.delete_rows(rownum)
             shop._CACHE["products"]["ts"] = 0.0
+            invalidate_snapshot_cache()
             return {"ok": True, "product_id": product_id}
 
     raise ValueError("Khong tim thay san pham")
@@ -1074,6 +1116,7 @@ def add_stock(data: Dict[str, Any]) -> Dict[str, Any]:
     if rows:
         shop._ws_pool.append_rows(rows, value_input_option="USER_ENTERED")
         shop.invalidate_stock_cache()
+        invalidate_snapshot_cache()
     return {"ok": True, "added": len(rows), "skipped_duplicates": duplicate_secrets}
 
 
@@ -1081,6 +1124,8 @@ def release_order(order_id: str, status: str = "EXPIRED") -> Dict[str, Any]:
     if not order_id:
         raise ValueError("Missing order_id")
     released = shop.release_hold_by_order(order_id, status or "EXPIRED")
+    if released:
+        invalidate_snapshot_cache()
     return {"ok": True, "released": released}
 
 
@@ -1142,6 +1187,7 @@ def update_stock_item(data: Dict[str, Any]) -> Dict[str, Any]:
 
     shop._ws_pool.update_cells(cells, value_input_option="USER_ENTERED")
     shop.invalidate_stock_cache()
+    invalidate_snapshot_cache()
     return {"ok": True, "item_id": item_id, "status": status}
 
 
@@ -1199,6 +1245,7 @@ def release_holds(expired_only: bool = True, status: str = "EXPIRED") -> Dict[st
 
     if released:
         shop.invalidate_stock_cache()
+        invalidate_snapshot_cache()
 
     return {
         "ok": True,
@@ -1217,4 +1264,5 @@ def update_order(order_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
     if not payload:
         raise ValueError("No allowed updates")
     shop.set_order_fields(order_id, payload)
+    invalidate_snapshot_cache()
     return {"ok": True, "order_id": order_id, "updates": payload}
