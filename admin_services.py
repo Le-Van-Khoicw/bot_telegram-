@@ -642,6 +642,7 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
     code = str(data.get("code") or "").strip().upper()
     discount = max(1, _money_input(data.get("discount_amount") or data.get("discount_percent"), 0))
     min_order_total = max(0, _money_input(data.get("min_order_total"), 0))
+    stock_code = str(data.get("stock_code") or "").strip().upper()
     required = max(0, shop.normalize_int(data.get("required_orders"), 0))
     expires_days = max(1, shop.normalize_int(data.get("expires_days"), 7))
     status = str(data.get("status") or "ACTIVE").strip().upper()
@@ -655,6 +656,7 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
         "code": code,
         "discount_amount": discount,
         "min_order_total": min_order_total,
+        "stock_code": stock_code,
         "required_orders": required,
         "expires_days": expires_days,
         "status": status,

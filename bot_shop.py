@@ -123,8 +123,8 @@ PENDING_SLOT_EMAIL: Dict[int, Dict[str, str]] = {}  # user_id -> {"slot_id": ...
 SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}
 SESSION_EXPIRY_SECONDS = 600  # 10 minutes
 CHECKOUT_IN_PROGRESS: set[int] = set()
-PROMOTION_HEADERS = ["id", "code", "discount_amount", "min_order_total", "required_orders", "expires_days", "status", "note", "created_at", "updated_at"]
-PROMO_AWARD_HEADERS = ["user_id", "username", "full_name", "promo_id", "cycle", "code", "discount_amount", "min_order_total", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
+PROMOTION_HEADERS = ["id", "code", "discount_amount", "min_order_total", "stock_code", "required_orders", "expires_days", "status", "note", "created_at", "updated_at"]
+PROMO_AWARD_HEADERS = ["user_id", "username", "full_name", "promo_id", "cycle", "code", "discount_amount", "min_order_total", "stock_code", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
 PROMO_SETTINGS_HEADERS = ["key", "value", "updated_at"]
 SLOT_HEADERS = ["slot_id", "title", "price", "total_slots", "status", "note", "created_at", "updated_at"]
 SLOT_PARTICIPANT_HEADERS = ["slot_id", "user_id", "username", "full_name", "email", "order_id", "status", "paid_at", "joined_at", "done_at", "note"]
@@ -813,6 +813,16 @@ def active_promotion_by_code(code: str) -> Optional[Dict[str, str]]:
             return promo
     return None
 
+def promo_matches_stock(promo_or_award: Dict[str, str], stock_code: str = "") -> bool:
+    target = str(promo_or_award.get("stock_code") or "").strip().upper()
+    if not target:
+        return True
+    current = str(stock_code or "").strip().upper()
+    if not current:
+        return False
+    allowed = [part.strip().upper() for part in re.split(r"[,;\s]+", target) if part.strip()]
+    return current in allowed
+
 def count_delivered_orders_for_user(user_id: int) -> int:
     init_sheets()
     count = 0
@@ -862,6 +872,7 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
         min_order_total = normalize_int(promo.get("min_order_total"), 0)
         if not promo_id or not code_base or required <= 0 or discount <= 0:
             continue
+        stock_code = str(promo.get("stock_code") or "").strip().upper()
         earned_cycles = delivered_count // required
         if earned_cycles <= 0:
             continue
@@ -880,6 +891,7 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
                 "code": code,
                 "discount_amount": str(discount),
                 "min_order_total": str(min_order_total),
+                "stock_code": stock_code,
                 "status": "ACTIVE",
                 "awarded_at": now,
                 "expires_at": expires_at,
@@ -897,7 +909,7 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
         ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
     return awarded
 
-def best_available_promo_award(user_id: int, subtotal: int = 0) -> Optional[Dict[str, str]]:
+def best_available_promo_award(user_id: int, subtotal: int = 0, stock_code: str = "") -> Optional[Dict[str, str]]:
     now = now_dt()
     subtotal = normalize_int(subtotal, 0)
     candidates = []
@@ -915,11 +927,13 @@ def best_available_promo_award(user_id: int, subtotal: int = 0) -> Optional[Dict
             continue
         if subtotal > 0 and min_order_total > subtotal:
             continue
+        if not promo_matches_stock(row, stock_code):
+            continue
         candidates.append(row)
     candidates.sort(key=lambda x: normalize_int(x.get("discount_amount") or x.get("discount_percent"), 0), reverse=True)
     return candidates[0] if candidates else None
 
-def claim_manual_promo_code(user_id: int, code: str, subtotal: int) -> Optional[Dict[str, str]]:
+def claim_manual_promo_code(user_id: int, code: str, subtotal: int, stock_code: str = "") -> Optional[Dict[str, str]]:
     code = str(code or "").strip().upper()
     subtotal = normalize_int(subtotal, 0)
     if not code:
@@ -943,6 +957,8 @@ def claim_manual_promo_code(user_id: int, code: str, subtotal: int) -> Optional[
         min_order_total = normalize_int(row.get("min_order_total"), 0)
         if discount <= 0 or subtotal < min_order_total:
             return None
+        if not promo_matches_stock(row, stock_code):
+            return None
         return row
 
     promo = active_promotion_by_code(code)
@@ -954,9 +970,12 @@ def claim_manual_promo_code(user_id: int, code: str, subtotal: int) -> Optional[
     min_order_total = normalize_int(promo.get("min_order_total"), 0)
     if discount <= 0 or subtotal < min_order_total:
         return None
+    if not promo_matches_stock(promo, stock_code):
+        return None
 
     profile = user_profile_from_sheet(user_id)
     expires_days = normalize_int(promo.get("expires_days"), 7)
+    promo_stock_code = str(promo.get("stock_code") or "").strip().upper()
     award = {
         "user_id": str(user_id),
         "username": profile.get("username", ""),
@@ -966,6 +985,7 @@ def claim_manual_promo_code(user_id: int, code: str, subtotal: int) -> Optional[
         "code": code,
         "discount_amount": str(discount),
         "min_order_total": str(min_order_total),
+        "stock_code": promo_stock_code,
         "status": "ACTIVE",
         "awarded_at": now_str(),
         "expires_at": (now_dt() + timedelta(days=max(1, expires_days))).strftime("%Y-%m-%d %H:%M:%S"),
@@ -2911,7 +2931,7 @@ async def checkout_flow(
     subtotal = sum(normalize_int(item.get("price"), int(product["price"])) for item in reserved_items)
     try:
         await gs_call(award_promotions_for_user, user_id)
-        promo_award = await gs_call(best_available_promo_award, user_id, subtotal)
+        promo_award = await gs_call(best_available_promo_award, user_id, subtotal, product["stock_code"])
     except Exception as exc:
         logger.warning("promo lookup failed user=%s: %s", user_id, exc)
         promo_award = None
@@ -3196,7 +3216,7 @@ async def handle_promo_code_input(update: Update, context: ContextTypes.DEFAULT_
         return True
 
     subtotal = normalize_int(order.get("subtotal"), normalize_int(order.get("total"), 0) + normalize_int(order.get("promo_discount"), 0))
-    award = await gs_call(claim_manual_promo_code, user_id, raw, subtotal)
+    award = await gs_call(claim_manual_promo_code, user_id, raw, subtotal, order.get("stock_code", ""))
     if not award:
         await update.message.reply_text(
             "❌ Mã không hợp lệ, đã dùng, hết hạn hoặc đơn chưa đạt mức tối thiểu. Bạn nhập mã khác hoặc gõ `huy`.",

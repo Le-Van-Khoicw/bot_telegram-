@@ -24,6 +24,7 @@ const EMPTY = {
   code: "",
   discount_amount: "20000",
   min_order_total: "0",
+  stock_code: "",
   required_orders: "0",
   expires_days: "7",
   status: "ACTIVE",
@@ -83,6 +84,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
       code: blank(promo.code) ? "" : text(promo.code),
       discount_amount: blank(promo.discount_amount || promo.discount_percent) ? "20000" : text(promo.discount_amount || promo.discount_percent),
       min_order_total: blank(promo.min_order_total) ? "0" : text(promo.min_order_total),
+      stock_code: blank(promo.stock_code) ? "" : text(promo.stock_code),
       required_orders: "0",
       expires_days: blank(promo.expires_days) ? "7" : text(promo.expires_days),
       status: text(promo.status) === "PAUSED" ? "PAUSED" : "ACTIVE",
@@ -181,6 +183,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                 <TableHead>Ma</TableHead>
                 <TableHead className="text-center">Giam</TableHead>
                 <TableHead className="text-center">Don toi thieu</TableHead>
+                <TableHead className="text-center">Stock</TableHead>
                 <TableHead className="text-center">Han dung</TableHead>
                 <TableHead className="text-center">Trang thai</TableHead>
                 <TableHead>Ghi chu</TableHead>
@@ -193,6 +196,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.code)}</code></TableCell>
                   <TableCell className="text-center">{money(promo.discount_amount || promo.discount_percent)}</TableCell>
                   <TableCell className="text-center">{money(promo.min_order_total)}</TableCell>
+                  <TableCell className="text-center">{blank(promo.stock_code) ? "Tat ca" : <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.stock_code)}</code>}</TableCell>
                   <TableCell className="text-center">{text(promo.expires_days)} ngay</TableCell>
                   <TableCell className="text-center"><Badge variant={text(promo.status) === "PAUSED" ? "outline" : "default"}>{statusLabel(promo.status)}</Badge></TableCell>
                   <TableCell className="max-w-[260px] truncate text-muted-foreground">{text(promo.note)}</TableCell>
@@ -201,7 +205,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   </TableCell>
                 </TableRow>
               ))}
-              {!promotions.length && <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">Chua co ma khuyen mai</TableCell></TableRow>}
+              {!promotions.length && <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">Chua co ma khuyen mai</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>
@@ -219,6 +223,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                 <TableHead>Ma da tang</TableHead>
                 <TableHead className="text-center">Giam</TableHead>
                 <TableHead className="text-center">Don toi thieu</TableHead>
+                <TableHead className="text-center">Stock</TableHead>
                 <TableHead className="text-center">Trang thai</TableHead>
                 <TableHead>Han dung</TableHead>
                 <TableHead>Don da dung</TableHead>
@@ -234,12 +239,13 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(award.code)}</code></TableCell>
                   <TableCell className="text-center">{money(award.discount_amount || award.discount_percent)}</TableCell>
                   <TableCell className="text-center">{money(award.min_order_total)}</TableCell>
+                  <TableCell className="text-center">{blank(award.stock_code) ? "Tat ca" : <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(award.stock_code)}</code>}</TableCell>
                   <TableCell className="text-center"><Badge variant={text(award.status) === "USED" ? "secondary" : "default"}>{text(award.status)}</Badge></TableCell>
                   <TableCell className="text-xs text-muted-foreground">{text(award.expires_at)}</TableCell>
                   <TableCell className="font-mono text-xs">{text(award.used_order_id)}</TableCell>
                 </TableRow>
               ))}
-              {!awards.length && <TableRow><TableCell colSpan={10} className="py-8 text-center text-muted-foreground">Chua tang ma nao</TableCell></TableRow>}
+              {!awards.length && <TableRow><TableCell colSpan={11} className="py-8 text-center text-muted-foreground">Chua tang ma nao</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>
@@ -254,6 +260,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
               <div className="space-y-1"><Label>So tien giam</Label><Input inputMode="numeric" value={form.discount_amount} onChange={(event) => setForm({ ...form, discount_amount: event.target.value })} placeholder="VD: 20k, 20.000" /></div>
               <div className="space-y-1"><Label>Don toi thieu</Label><Input inputMode="numeric" value={form.min_order_total} onChange={(event) => setForm({ ...form, min_order_total: event.target.value })} placeholder="VD: 500k, 500.000" /></div>
             </div>
+            <div className="space-y-1"><Label>Stock Code ap dung</Label><Input value={form.stock_code} onChange={(event) => setForm({ ...form, stock_code: event.target.value.toUpperCase() })} placeholder="Bo trong = tat ca, VD: CAPCUT" /></div>
             <div className="space-y-1"><Label>Han ngay</Label><Input type="number" min="1" value={form.expires_days} onChange={(event) => setForm({ ...form, expires_days: event.target.value })} /></div>
             <div className="space-y-1">
               <Label>Trang thai</Label>
