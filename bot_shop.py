@@ -1229,6 +1229,8 @@ def stock_price_preview_by_code(
             fallback_prices.get(stock_code, 0),
             pricing_enabled_by_code.get(stock_code, True),
         )
+        if not pricing.get("is_time_priced"):
+            continue
         if normalize_int(pricing.get("price"), 0) <= 0:
             continue
         expires_at = str(pricing.get("expires_at") or "9999-12-31 23:59:59")
@@ -1270,6 +1272,8 @@ def stock_price_preview_for_products(products: List[Dict[str, Any]]) -> Dict[str
                 normalize_int(product.get("price"), 0),
                 bool(product.get("pricing_enabled", True)),
             )
+            if not pricing.get("is_time_priced"):
+                continue
             if normalize_int(pricing.get("price"), 0) <= 0:
                 continue
             expires_at = str(pricing.get("expires_at") or "9999-12-31 23:59:59")
