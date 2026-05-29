@@ -9,6 +9,7 @@ import { Label } from "../ui/label";
 import { Badge } from "../ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
 import { Switch } from "../ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../api";
 
 interface Props {
@@ -22,7 +23,42 @@ const EMPTY = { product_id: "", name: "", stock_code: "", price: "", duration_da
 const dateTimeLocal = (value: any) => {
   const raw = text(value);
   if (raw === "—" || raw === "â€”") return "";
-  return raw.replace(" ", "T").slice(0, 16);
+  const normalized = raw.trim().replace(" ", "T");
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(normalized)) return normalized.slice(0, 16);
+  const vn = raw.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?:\s*(SA|CH|AM|PM))?)?/i);
+  if (!vn) return normalized.slice(0, 16);
+  const day = vn[1].padStart(2, "0");
+  const month = vn[2].padStart(2, "0");
+  const year = vn[3];
+  let hour = Number(vn[4] || "23");
+  const minute = String(vn[5] || "59").padStart(2, "0");
+  const marker = String(vn[6] || "").toUpperCase();
+  if ((marker === "SA" || marker === "AM") && hour === 12) hour = 0;
+  if ((marker === "CH" || marker === "PM") && hour < 12) hour += 12;
+  return `${year}-${month}-${day}T${String(hour).padStart(2, "0")}:${minute}`;
+};
+
+const expiryParts = (value: string) => {
+  const normalized = dateTimeLocal(value);
+  const [date = "", time = "23:59"] = normalized.split("T");
+  const [hourRaw = "23", minuteRaw = "59"] = time.split(":");
+  const hour24 = Math.min(23, Math.max(0, Number(hourRaw) || 0));
+  const hour12 = hour24 % 12 || 12;
+  return {
+    date,
+    hour: String(hour12).padStart(2, "0"),
+    minute: String(Math.min(59, Math.max(0, Number(minuteRaw) || 0))).padStart(2, "0"),
+    marker: hour24 < 12 ? "SA" : "CH",
+  };
+};
+
+const composeExpiry = (date: string, hour: string, minute: string, marker: string) => {
+  if (!date) return "";
+  let h = Math.min(12, Math.max(1, Number(hour) || 12));
+  const m = Math.min(59, Math.max(0, Number(minute) || 0));
+  if (marker === "SA" && h === 12) h = 0;
+  if (marker === "CH" && h < 12) h += 12;
+  return `${date}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 };
 
 const isPricingEnabled = (value: any) => {
@@ -100,6 +136,11 @@ export function Products({ data, adminKey, refresh }: Props) {
   };
 
   const products = data?.products || [];
+  const expiry = expiryParts(form.expires_at);
+  const setExpiry = (next: Partial<typeof expiry>) => {
+    const merged = { ...expiry, ...next };
+    setForm({ ...form, expires_at: composeExpiry(merged.date, merged.hour, merged.minute, merged.marker) });
+  };
 
   return (
     <div className="space-y-4">
@@ -169,7 +210,35 @@ export function Products({ data, adminKey, refresh }: Props) {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1"><Label>Tổng số ngày</Label><Input type="number" min="0" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: e.target.value })} placeholder="Ví dụ: 7" /></div>
-              <div className="space-y-1"><Label>Hết hạn lúc</Label><Input type="datetime-local" value={form.expires_at} onChange={(e) => setForm({ ...form, expires_at: e.target.value })} /></div>
+              <div className="space-y-1">
+                <Label>Hết hạn lúc</Label>
+                <div className="grid grid-cols-[1fr_72px_72px_78px] gap-2">
+                  <Input type="date" value={expiry.date} onChange={(e) => setExpiry({ date: e.target.value })} />
+                  <Select value={expiry.hour} onValueChange={(value) => setExpiry({ hour: value })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, "0")).map((hour) => (
+                        <SelectItem key={hour} value={hour}>{hour}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={expiry.minute} onValueChange={(value) => setExpiry({ minute: value })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 60 }, (_, index) => String(index).padStart(2, "0")).map((minute) => (
+                        <SelectItem key={minute} value={minute}>{minute}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={expiry.marker} onValueChange={(value) => setExpiry({ marker: value })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="SA">SA</SelectItem>
+                      <SelectItem value="CH">CH</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
             <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
               <Label htmlFor="pricing_enabled">Bật giá tự giảm theo date</Label>
