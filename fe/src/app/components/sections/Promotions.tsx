@@ -67,6 +67,9 @@ export function Promotions({ data, adminKey, refresh }: Props) {
 
   const promotions = data?.promotions || [];
   const awards = data?.promo_awards || [];
+  const stockOptions = Array.from(
+    new Set((data?.products || []).map((product) => text(product.stock_code)).filter((stock) => stock && !blank(stock)))
+  ).sort();
 
   const syncSettings = () => {
     setMenuEnabled(String(settings.menu_enabled || "").toUpperCase() === "TRUE");
@@ -260,7 +263,18 @@ export function Promotions({ data, adminKey, refresh }: Props) {
               <div className="space-y-1"><Label>So tien giam</Label><Input inputMode="numeric" value={form.discount_amount} onChange={(event) => setForm({ ...form, discount_amount: event.target.value })} placeholder="VD: 20k, 20.000" /></div>
               <div className="space-y-1"><Label>Don toi thieu</Label><Input inputMode="numeric" value={form.min_order_total} onChange={(event) => setForm({ ...form, min_order_total: event.target.value })} placeholder="VD: 500k, 500.000" /></div>
             </div>
-            <div className="space-y-1"><Label>Stock Code ap dung</Label><Input value={form.stock_code} onChange={(event) => setForm({ ...form, stock_code: event.target.value.toUpperCase() })} placeholder="Bo trong = tat ca, VD: CAPCUT" /></div>
+            <div className="space-y-1">
+              <Label>Stock Code ap dung</Label>
+              <Select value={form.stock_code || "__ALL__"} onValueChange={(value) => setForm({ ...form, stock_code: value === "__ALL__" ? "" : value })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__ALL__">Tat ca san pham</SelectItem>
+                  {stockOptions.map((stock) => (
+                    <SelectItem key={stock} value={stock}>{stock}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-1"><Label>Han ngay</Label><Input type="number" min="1" value={form.expires_days} onChange={(event) => setForm({ ...form, expires_days: event.target.value })} /></div>
             <div className="space-y-1">
               <Label>Trang thai</Label>
