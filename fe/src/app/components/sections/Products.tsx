@@ -208,11 +208,11 @@ export function Products({ data, adminKey, refresh }: Props) {
               <div className="space-y-1"><Label>Giá gốc</Label><Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
               <div className="space-y-1"><Label>Giới hạn slot</Label><Input type="number" min="0" value={form.slot_limit} onChange={(e) => setForm({ ...form, slot_limit: e.target.value })} placeholder="VD: 10, bỏ trống nếu không phải slot" /></div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <div className="space-y-1"><Label>Tổng số ngày</Label><Input type="number" min="0" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: e.target.value })} placeholder="Ví dụ: 7" /></div>
               <div className="space-y-1">
                 <Label>Hết hạn lúc</Label>
-                <div className="grid grid-cols-[1fr_72px_72px_78px] gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-[minmax(150px,1fr)_72px_72px_78px]">
                   <Input type="date" value={expiry.date} onChange={(e) => setExpiry({ date: e.target.value })} />
                   <Select value={expiry.hour} onValueChange={(value) => setExpiry({ hour: value })}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
