@@ -3404,7 +3404,10 @@ async def checkout_flow(
             )
 
         qr_msg_id = str(m.message_id)
-        await gs_call(set_order_fields, order_id, {"qr_msg_id": qr_msg_id})
+        try:
+            await gs_call(set_order_fields, order_id, {"qr_msg_id": qr_msg_id})
+        except Exception as exc:
+            logger.warning("set qr_msg_id failed order=%s msg_id=%s: %s", order_id, qr_msg_id, exc)
 
     except Exception as e:
         logger.error("❌ send_photo failed for %s | qr_url=%s | err=%s", order_id, qr_url, e)
@@ -3438,33 +3441,45 @@ async def checkout_flow(
                 disable_web_page_preview=True,
             )
         qr_msg_id = str(m.message_id)
-        await gs_call(set_order_fields, order_id, {"qr_msg_id": qr_msg_id})
+        try:
+            await gs_call(set_order_fields, order_id, {"qr_msg_id": qr_msg_id})
+        except Exception as exc:
+            logger.warning("set fallback qr_msg_id failed order=%s msg_id=%s: %s", order_id, qr_msg_id, exc)
 
-    await schedule_ttl(context.application, user_id, order_id)
+    try:
+        await schedule_ttl(context.application, user_id, order_id)
+    except Exception as exc:
+        logger.warning("schedule ttl failed order=%s: %s", order_id, exc)
 
-    if context.application.job_queue and qr_msg_id:
-        context.application.job_queue.run_repeating(
-            countdown_job,
-            interval=60,
-            first=60,
-            data={"order_id": order_id, "user_id": user_id},
-            name=f"countdown_{order_id}",
+    try:
+        if context.application.job_queue and qr_msg_id:
+            context.application.job_queue.run_repeating(
+                countdown_job,
+                interval=60,
+                first=60,
+                data={"order_id": order_id, "user_id": user_id},
+                name=f"countdown_{order_id}",
+            )
+    except Exception as exc:
+        logger.warning("schedule countdown failed order=%s: %s", order_id, exc)
+
+    try:
+        customer_text = await admin_customer_text(context, user_id)
+        await notify_admins(
+            context,
+            (
+                "🛒 *Đơn mới đang chờ thanh toán*\n"
+                f"Order: `{escape_markdown(order_id, version=2)}`\n"
+                f"Khách: {escape_markdown(customer_text, version=2)}\n"
+                f"Sản phẩm: {escape_markdown(str(product.get('name', product['stock_code'])), version=2)}\n"
+                f"Stock: `{escape_markdown(str(product['stock_code']), version=2)}`\n"
+                f"SL: `{qty}`\n"
+                f"Tổng: *{escape_markdown(money_vnd(total), version=2)}*\n"
+                f"Tạo lúc: `{escape_markdown(created_at, version=2)}`"
+            ),
         )
-
-    customer_text = await admin_customer_text(context, user_id)
-    await notify_admins(
-        context,
-        (
-            "🛒 *Đơn mới đang chờ thanh toán*\n"
-            f"Order: `{escape_markdown(order_id, version=2)}`\n"
-            f"Khách: {escape_markdown(customer_text, version=2)}\n"
-            f"Sản phẩm: {escape_markdown(str(product.get('name', product['stock_code'])), version=2)}\n"
-            f"Stock: `{escape_markdown(str(product['stock_code']), version=2)}`\n"
-            f"SL: `{qty}`\n"
-            f"Tổng: *{escape_markdown(money_vnd(total), version=2)}*\n"
-            f"Tạo lúc: `{escape_markdown(created_at, version=2)}`"
-        ),
-    )
+    except Exception as exc:
+        logger.warning("notify new order failed order=%s user=%s: %s", order_id, user_id, exc)
 
     return True
 
