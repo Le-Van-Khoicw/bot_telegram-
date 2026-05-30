@@ -957,6 +957,43 @@ def best_available_promo_award(user_id: int, subtotal: int = 0, stock_code: str 
     candidates.sort(key=lambda x: normalize_int(x.get("discount_amount") or x.get("discount_percent"), 0), reverse=True)
     return candidates[0] if candidates else None
 
+def best_public_promotion(subtotal: int = 0, stock_code: str = "") -> Optional[Dict[str, str]]:
+    subtotal = normalize_int(subtotal, 0)
+    candidates = []
+    for promo in active_promotions():
+        if normalize_int(promo.get("required_orders"), 0) > 0:
+            continue
+        discount = normalize_int(promo.get("discount_amount") or promo.get("discount_percent"), 0)
+        min_order_total = normalize_int(promo.get("min_order_total"), 0)
+        code = str(promo.get("code") or "").strip().upper()
+        if not code or discount <= 0:
+            continue
+        if subtotal > 0 and min_order_total > subtotal:
+            continue
+        if not promo_matches_stock(promo, stock_code):
+            continue
+        candidates.append({
+            **promo,
+            "code": code,
+            "cycle": "public",
+            "promo_id": str(promo.get("id") or "").strip(),
+            "discount_amount": str(discount),
+            "min_order_total": str(min_order_total),
+        })
+    candidates.sort(key=lambda x: normalize_int(x.get("discount_amount") or x.get("discount_percent"), 0), reverse=True)
+    return candidates[0] if candidates else None
+
+def best_checkout_promo(user_id: int, subtotal: int = 0, stock_code: str = "") -> Optional[Dict[str, str]]:
+    award = best_available_promo_award(user_id, subtotal, stock_code)
+    public = best_public_promotion(subtotal, stock_code)
+    if not award:
+        return public
+    if not public:
+        return award
+    award_discount = normalize_int(award.get("discount_amount") or award.get("discount_percent"), 0)
+    public_discount = normalize_int(public.get("discount_amount") or public.get("discount_percent"), 0)
+    return public if public_discount > award_discount else award
+
 def claim_manual_promo_code(user_id: int, code: str, subtotal: int, stock_code: str = "") -> Optional[Dict[str, str]]:
     code = str(code or "").strip().upper()
     subtotal = normalize_int(subtotal, 0)
@@ -2536,7 +2573,18 @@ async def handle_slot_email_input(update: Update, context: ContextTypes.DEFAULT_
         slot_title = str(slot.get("title") or slot_id)
         stock_code = f"SLOT:{slot_id}"
     order_id = generate_order_id()
-    total = normalize_int(slot.get("price"), 0)
+    subtotal = normalize_int(slot.get("price"), 0)
+    try:
+        await gs_call(award_promotions_for_user, user_id)
+        promo_award = await gs_call(best_checkout_promo, user_id, subtotal, stock_code)
+    except Exception as exc:
+        logger.warning("slot promo lookup failed user=%s: %s", user_id, exc)
+        promo_award = None
+    promo_code = str((promo_award or {}).get("code") or "").strip()
+    promo_amount = normalize_int((promo_award or {}).get("discount_amount") or (promo_award or {}).get("discount_percent"), 0)
+    promo_min_total = normalize_int((promo_award or {}).get("min_order_total"), 0)
+    promo_discount = min(subtotal, promo_amount) if promo_code and promo_amount > 0 and subtotal >= promo_min_total else 0
+    total = max(0, subtotal - promo_discount)
     created_at = now_str()
     await gs_call(append_order, {
         "order_id": order_id,
@@ -2544,9 +2592,9 @@ async def handle_slot_email_input(update: Update, context: ContextTypes.DEFAULT_
         "stock_code": stock_code,
         "qty": 1,
         "total": total,
-        "subtotal": total,
-        "promo_code": "",
-        "promo_discount": 0,
+        "subtotal": subtotal,
+        "promo_code": promo_code,
+        "promo_discount": promo_discount,
         "status": "PENDING",
         "qr_msg_id": "",
         "paid_at": "",
@@ -2564,13 +2612,15 @@ async def handle_slot_email_input(update: Update, context: ContextTypes.DEFAULT_
     caption = build_checkout_caption_with_countdown(
         order_id=order_id,
         product_name=f"Slot: {slot_title}",
-        unit_price=total,
+        unit_price=subtotal,
         qty=1,
         total=total,
         remain_seconds=ORDER_TTL_SECONDS,
         status_line="⏳ *ĐANG CHỜ THANH TOÁN SLOT*",
         price_note=f"Email dang ky: {escape_markdown(email, version=1)}",
-        subtotal=total,
+        subtotal=subtotal,
+        promo_code=promo_code,
+        promo_discount=promo_discount,
     )
     qr_url = build_vietqr_image_url(order_id, total)
     qr_bytes = await fetch_qr_bytes(qr_url, timeout=6)
@@ -2959,7 +3009,7 @@ async def checkout_flow(
     subtotal = sum(normalize_int(item.get("price"), int(product["price"])) for item in reserved_items)
     try:
         await gs_call(award_promotions_for_user, user_id)
-        promo_award = await gs_call(best_available_promo_award, user_id, subtotal, product["stock_code"])
+        promo_award = await gs_call(best_checkout_promo, user_id, subtotal, product["stock_code"])
     except Exception as exc:
         logger.warning("promo lookup failed user=%s: %s", user_id, exc)
         promo_award = None
