@@ -384,14 +384,7 @@ def product_price_note(product: Dict[str, Any]) -> str:
 
 def is_slot_product(product: Dict[str, Any]) -> bool:
     stock_code = str(product.get("stock_code") or "").strip().upper()
-    product_id = str(product.get("product_id") or "").strip().upper()
-    name = str(product.get("name") or "").strip().upper()
-    return (
-        stock_code.startswith("SLOT")
-        or product_id.startswith("SLOT")
-        or slot_limit(product) > 0
-        or "SLOT" in name
-    )
+    return stock_code.startswith("SLOT")
 
 
 def slot_order_stock_code(product: Dict[str, Any]) -> str:
