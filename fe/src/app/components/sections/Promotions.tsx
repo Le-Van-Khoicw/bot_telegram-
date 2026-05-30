@@ -56,6 +56,8 @@ const moneyInputToNumber = (value: string) => {
 
 const statusLabel = (status: unknown) => text(status).toUpperCase() === "PAUSED" ? "Tắt" : "Bật";
 
+const plainNumber = (value: string) => String(value || "").replace(/[^\d]/g, "") || "0";
+
 export function Promotions({ data, adminKey, refresh }: Props) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ ...EMPTY });
@@ -92,7 +94,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
       discount_amount: blank(promo.discount_amount || promo.discount_percent) ? "20000" : text(promo.discount_amount || promo.discount_percent),
       min_order_total: blank(promo.min_order_total) ? "0" : text(promo.min_order_total),
       stock_code: blank(promo.stock_code) ? "" : text(promo.stock_code),
-      required_orders: "0",
+      required_orders: blank(promo.required_orders) ? "0" : text(promo.required_orders),
       expires_days: blank(promo.expires_days) ? "7" : text(promo.expires_days),
       status: text(promo.status) === "PAUSED" ? "PAUSED" : "ACTIVE",
       note: blank(promo.note) ? "" : text(promo.note),
@@ -109,7 +111,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
           ...form,
           discount_amount: moneyInputToNumber(form.discount_amount),
           min_order_total: moneyInputToNumber(form.min_order_total),
-          required_orders: "0",
+          required_orders: plainNumber(form.required_orders),
         }),
       });
       toast.success("Da luu khuyen mai");
@@ -194,6 +196,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                 <TableHead>Ma</TableHead>
                 <TableHead className="text-center">Giam</TableHead>
                 <TableHead className="text-center">Don toi thieu</TableHead>
+                <TableHead className="text-center">Moc tang</TableHead>
                 <TableHead className="text-center">Stock</TableHead>
                 <TableHead className="text-center">Han dung</TableHead>
                 <TableHead className="text-center">Trang thai</TableHead>
@@ -207,6 +210,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.code)}</code></TableCell>
                   <TableCell className="text-center">{money(promo.discount_amount || promo.discount_percent)}</TableCell>
                   <TableCell className="text-center">{money(promo.min_order_total)}</TableCell>
+                  <TableCell className="text-center">{Number(promo.required_orders || 0) > 0 ? `${text(promo.required_orders)} don` : "Public"}</TableCell>
                   <TableCell className="text-center">{blank(promo.stock_code) ? "Tat ca" : <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.stock_code)}</code>}</TableCell>
                   <TableCell className="text-center">{text(promo.expires_days)} ngay</TableCell>
                   <TableCell className="text-center"><Badge variant={text(promo.status) === "PAUSED" ? "outline" : "default"}>{statusLabel(promo.status)}</Badge></TableCell>
@@ -216,7 +220,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   </TableCell>
                 </TableRow>
               ))}
-              {!promotions.length && <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">Chua co ma khuyen mai</TableCell></TableRow>}
+              {!promotions.length && <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">Chua co ma khuyen mai</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>
@@ -270,6 +274,10 @@ export function Promotions({ data, adminKey, refresh }: Props) {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1"><Label>So tien giam</Label><Input inputMode="numeric" value={form.discount_amount} onChange={(event) => setForm({ ...form, discount_amount: event.target.value })} placeholder="VD: 20k, 20.000" /></div>
               <div className="space-y-1"><Label>Don toi thieu</Label><Input inputMode="numeric" value={form.min_order_total} onChange={(event) => setForm({ ...form, min_order_total: event.target.value })} placeholder="VD: 500k, 500.000" /></div>
+            </div>
+            <div className="space-y-1">
+              <Label>Moc tang sau X don</Label>
+              <Input inputMode="numeric" value={form.required_orders} onChange={(event) => setForm({ ...form, required_orders: plainNumber(event.target.value) })} placeholder="0 = ma public, VD: 10" />
             </div>
             <div className="space-y-1">
               <Label>Stock Code ap dung</Label>
