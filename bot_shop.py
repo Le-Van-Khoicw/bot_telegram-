@@ -402,7 +402,14 @@ def price_note_from_values(base_price: int, duration_days: int, remaining_days: 
     tomorrow_price = round(base * tomorrow_billable_days / duration) if tomorrow_billable_days > 0 else 0
     return f"Giá tự giảm theo hạn sử dụng: hôm nay còn {remaining}/{duration} ngày = {fmt_price(current_price)}. Ngày mai còn {tomorrow} ngày = {fmt_price(tomorrow_price)}. Hết hạn {expires_at}."
 
-def stock_item_pricing(row: List[str], headers: Dict[str, int], fallback_price: int = 0, enable_time_pricing: bool = True) -> Dict[str, Any]:
+def stock_item_pricing(
+    row: List[str],
+    headers: Dict[str, int],
+    fallback_price: int = 0,
+    enable_time_pricing: bool = True,
+    fallback_duration_days: int = 0,
+    fallback_expires_at: Any = "",
+) -> Dict[str, Any]:
     def cell(key: str) -> str:
         col = headers.get(key.lower())
         return row[col - 1].strip() if col and col - 1 < len(row) else ""
@@ -411,10 +418,15 @@ def stock_item_pricing(row: List[str], headers: Dict[str, int], fallback_price: 
     item_base_price = normalize_int(cell("base_price") or cell("price"), 0)
     duration_days = normalize_int(cell("duration_days") or cell("total_days"), 0)
     expires_at = cell("expires_at") or cell("expire_at") or cell("expiry_at")
+    if item_base_price <= 0:
+        item_base_price = fallback_price
+    if duration_days <= 0:
+        duration_days = normalize_int(fallback_duration_days, 0)
+    if not expires_at:
+        expires_at = str(fallback_expires_at or "").strip()
     if not enable_time_pricing or duration_days <= 0 or not expires_at:
-        return calculate_time_based_price(fallback_price, 0, "")
-    base_price = fallback_price if fallback_price > 0 else item_base_price
-    return calculate_time_based_price(base_price, duration_days, expires_at)
+        return calculate_time_based_price(item_base_price, 0, "")
+    return calculate_time_based_price(item_base_price, duration_days, expires_at)
 
 def generate_order_id() -> str:
     suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -1306,8 +1318,10 @@ def stock_price_preview_for_products(products: List[Dict[str, Any]]) -> Dict[str
             pricing = stock_item_pricing(
                 row,
                 headers,
-                normalize_int(product.get("price"), 0),
+                normalize_int(product.get("base_price") or product.get("price"), 0),
                 bool(product.get("pricing_enabled", True)),
+                normalize_int(product.get("duration_days"), 0),
+                product.get("expires_at", ""),
             )
             if not pricing.get("is_time_priced"):
                 continue
@@ -1341,6 +1355,8 @@ def reserve_items_from_pool(
     hold_seconds: int,
     fallback_price: int = 0,
     enable_time_pricing: bool = True,
+    fallback_duration_days: int = 0,
+    fallback_expires_at: Any = "",
 ) -> List[Dict[str, Any]]:
     """
     Lấy qty item READY từ POOL theo stock_code -> set HELD + hold_order_id/hold_at/hold_expires_at
@@ -1374,7 +1390,14 @@ def reserve_items_from_pool(
         if sc == stock_code and st == "READY":
             item_id = r[col_item_id - 1].strip() if col_item_id - 1 < len(r) else ""
             secret = r[col_secret - 1].strip() if col_secret - 1 < len(r) else ""
-            pricing = stock_item_pricing(r, hmap, fallback_price, enable_time_pricing)
+            pricing = stock_item_pricing(
+                r,
+                hmap,
+                fallback_price,
+                enable_time_pricing,
+                fallback_duration_days,
+                fallback_expires_at,
+            )
             if normalize_int(pricing.get("price"), 0) <= 0:
                 continue
             ready_items.append((idx, {
@@ -2990,7 +3013,14 @@ async def checkout_flow(
     # ✅ giữ kho chạy trong thread
     reserved_items = await gs_call(
         reserve_items_from_pool,
-        product["stock_code"], qty, order_id, ORDER_TTL_SECONDS, int(product["price"]), bool(product.get("pricing_enabled", True))
+        product["stock_code"],
+        qty,
+        order_id,
+        ORDER_TTL_SECONDS,
+        normalize_int(product.get("base_price") or product.get("price"), 0),
+        bool(product.get("pricing_enabled", True)),
+        normalize_int(product.get("duration_days"), 0),
+        product.get("expires_at", ""),
     )
     if len(reserved_items) < qty:
         msg = "❌ Không thể giữ kho (POOL). Vui lòng nhập lại số lượng hoặc thử lại."
