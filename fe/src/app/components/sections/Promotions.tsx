@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Gift, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "../ui/badge";
@@ -76,6 +76,10 @@ export function Promotions({ data, adminKey, refresh }: Props) {
     setMenuText(String(settings.menu_text || ""));
   };
 
+  useEffect(() => {
+    syncSettings();
+  }, [settings.menu_enabled, settings.menu_text]);
+
   const openAdd = () => {
     setForm({ ...EMPTY });
     setOpen(true);
@@ -135,10 +139,14 @@ export function Promotions({ data, adminKey, refresh }: Props) {
   const saveSettings = async () => {
     setSaving(true);
     try {
-      await adminApi("/admin/api/promo-settings", adminKey, {
+      const result = await adminApi<{ settings?: AnyRow }>("/admin/api/promo-settings", adminKey, {
         method: "POST",
         body: JSON.stringify({ menu_enabled: menuEnabled, menu_text: menuText }),
       });
+      if (result.settings) {
+        setMenuEnabled(String(result.settings.menu_enabled || "").toUpperCase() === "TRUE");
+        setMenuText(String(result.settings.menu_text || ""));
+      }
       toast.success("Da luu thong bao menu");
       await refresh();
     } finally {
