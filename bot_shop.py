@@ -155,6 +155,7 @@ def cleanup_expired_sessions():
 _CACHE = {
     "products": {"ts": 0.0, "data": []},
     "stock": {"ts": 0.0, "data": {}},
+    "stock_prices": {"ts": 0.0, "data": {}, "key": ""},
     "promo_settings": {"ts": 0.0, "data": {}},
     "slot_counts": {"ts": 0.0, "data": {}},
 }
@@ -165,24 +166,55 @@ def _ts() -> float:
 
 def invalidate_stock_cache():
     _CACHE["stock"]["ts"] = 0.0
+    _CACHE["stock_prices"]["ts"] = 0.0
 
-def load_products_cached(ttl: int = 30) -> List[Dict[str, Any]]:
+def load_products_cached(ttl: int = 90) -> List[Dict[str, Any]]:
     if _ts() - _CACHE["products"]["ts"] < ttl and _CACHE["products"]["data"]:
         return _CACHE["products"]["data"]
-    data = load_products()
-    _CACHE["products"] = {"ts": _ts(), "data": data}
-    return data
+    try:
+        data = load_products()
+        _CACHE["products"] = {"ts": _ts(), "data": data}
+        return data
+    except Exception as exc:
+        if _CACHE["products"]["data"]:
+            logger.warning("load_products failed, using stale cache: %s", exc)
+            return _CACHE["products"]["data"]
+        raise
 
 def normalize_order_ref(s: str) -> str:
     # giữ chữ/số, bỏ hết ký tự lạ như '-', ' ', '.', ...
     return re.sub(r"[^A-Za-z0-9]", "", (s or "")).upper()
 
-def stock_count_ready_by_code_cached(ttl: int = 5) -> Dict[str, int]:
+def stock_count_ready_by_code_cached(ttl: int = 30) -> Dict[str, int]:
     if _ts() - _CACHE["stock"]["ts"] < ttl and _CACHE["stock"]["data"]:
         return _CACHE["stock"]["data"]
-    data = stock_count_ready_by_code()
-    _CACHE["stock"] = {"ts": _ts(), "data": data}
-    return data
+    try:
+        data = stock_count_ready_by_code()
+        _CACHE["stock"] = {"ts": _ts(), "data": data}
+        return data
+    except Exception as exc:
+        if _CACHE["stock"]["data"]:
+            logger.warning("stock_count_ready failed, using stale cache: %s", exc)
+            return _CACHE["stock"]["data"]
+        raise
+
+def stock_price_preview_for_products_cached(products: List[Dict[str, Any]], ttl: int = 45) -> Dict[str, Dict[str, Any]]:
+    key = "|".join(
+        f"{p.get('product_id')}:{p.get('stock_code')}:{p.get('base_price') or p.get('price')}:{p.get('duration_days')}:{p.get('expires_at')}:{p.get('pricing_enabled')}"
+        for p in products
+    )
+    cached = _CACHE["stock_prices"]
+    if cached.get("key") == key and _ts() - float(cached.get("ts") or 0) < ttl and cached.get("data"):
+        return cached["data"]
+    try:
+        data = stock_price_preview_for_products(products)
+        _CACHE["stock_prices"] = {"ts": _ts(), "data": data, "key": key}
+        return data
+    except Exception as exc:
+        if cached.get("data"):
+            logger.warning("stock price preview failed, using stale cache: %s", exc)
+            return cached["data"]
+        raise
 
 
 def money_vnd(value: Any) -> str:
@@ -2422,13 +2454,13 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         products = await gs_call(load_products_cached)
         stock_ready = await gs_call(stock_count_ready_by_code_cached)
         slot_counts = await gs_call(slot_taken_count_by_code_cached) if any(is_slot_product(p) for p in products) else {}
-        stock_prices = await gs_call(stock_price_preview_for_products, products)
+        stock_prices = await gs_call(stock_price_preview_for_products_cached, products)
         products = [{**p, **stock_prices.get(p["product_id"], {})} for p in products]
     except Exception as e:
         logger.exception("show_products error")
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"❌ Lỗi Google Sheets:\n{e}",
+            text="❌ Bot đang bị Google Sheets giới hạn đọc tạm thời. Bạn thử lại sau khoảng 30-60 giây giúp mình nhé.",
             reply_markup=main_menu_keyboard(),
         )
         return
