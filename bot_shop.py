@@ -872,6 +872,9 @@ def load_promotions() -> List[Dict[str, str]]:
 def active_promotions() -> List[Dict[str, str]]:
     return [p for p in load_promotions() if str(p.get("status") or "ACTIVE").strip().upper() == "ACTIVE"]
 
+def active_promotion_ids() -> set[str]:
+    return {str(p.get("id") or "").strip() for p in active_promotions() if str(p.get("id") or "").strip()}
+
 def active_promotion_by_code(code: str) -> Optional[Dict[str, str]]:
     target = str(code or "").strip().upper()
     if not target:
@@ -981,8 +984,12 @@ def best_available_promo_award(user_id: int, subtotal: int = 0, stock_code: str 
     now = now_dt()
     subtotal = normalize_int(subtotal, 0)
     candidates = []
+    active_ids = active_promotion_ids()
     for row in get_all_records(promo_awards_ws()):
         if str(row.get("user_id") or "").strip() != str(user_id):
+            continue
+        promo_id = str(row.get("promo_id") or "").strip()
+        if promo_id and promo_id not in active_ids:
             continue
         if str(row.get("status") or "").strip().upper() != "ACTIVE":
             continue
@@ -2779,6 +2786,9 @@ async def handle_custom_qty_input(update: Update, context: ContextTypes.DEFAULT_
     user_id = update.effective_user.id
     if user_id not in PENDING_QTY:
         return False
+    if user_id in CHECKOUT_IN_PROGRESS:
+        await update.message.reply_text("Đơn trước đang tạo, đợi xíu nha.")
+        return True
 
     pid = PENDING_QTY[user_id]["product_id"]
     p = await gs_call(find_product_by_id, pid)
@@ -2799,7 +2809,11 @@ async def handle_custom_qty_input(update: Update, context: ContextTypes.DEFAULT_
 
     qty = int(t)
 
-    ok = await checkout_flow(user_id, p, qty, context, edit_query=None, from_custom_qty=True)
+    CHECKOUT_IN_PROGRESS.add(user_id)
+    try:
+        ok = await checkout_flow(user_id, p, qty, context, edit_query=None, from_custom_qty=True)
+    finally:
+        CHECKOUT_IN_PROGRESS.discard(user_id)
 
     if ok:
         PENDING_QTY.pop(user_id, None)  # ✅ chỉ pop khi tạo đơn OK
