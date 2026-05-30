@@ -1165,6 +1165,55 @@ def available_promo_codes_text(user_id: int, subtotal: int = 0, stock_code: str 
         lines.append(f"- {code}: giảm {discount}{min_text}")
     return "\n".join(lines)
 
+def promo_public_notice(promo: Dict[str, str], stock_code: str = "", user_id: int = 0) -> str:
+    kind = promo_type(promo)
+    target_user = str(promo.get("target_user_id") or "").strip()
+    if kind == "PRIVATE" and target_user and target_user != str(user_id):
+        return ""
+    if not promo_matches_stock(promo, stock_code):
+        return ""
+    note = str(promo.get("note") or "").strip()
+    if note:
+        return note
+    discount = fmt_price(normalize_int(promo.get("discount_amount") or promo.get("discount_percent"), 0))
+    code = str(promo.get("code") or "").strip().upper()
+    expires_days = normalize_int(promo.get("expires_days"), 0)
+    stock_target = str(promo.get("stock_code") or "").strip().upper() or "sản phẩm phù hợp"
+    limit = normalize_int(promo.get("max_claims"), 0)
+    limit_text = " Số lượng mã có hạn." if limit > 0 else ""
+    expires_text = f" Mã có hạn {expires_days} ngày." if expires_days > 0 else ""
+    if kind == "AMOUNT":
+        threshold = fmt_price(normalize_int(promo.get("threshold_amount"), 0))
+        return f"Mua tích lũy đủ {threshold} sẽ nhận 1 mã giảm {discount} cho đơn tiếp theo.{expires_text}{limit_text}"
+    if kind == "ORDER_QTY":
+        qty = normalize_int(promo.get("threshold_qty"), 0)
+        return f"Mua 1 đơn từ {qty} tài khoản {stock_target} trở lên sẽ nhận 1 mã giảm {discount} cho lần mua {stock_target} tiếp theo.{expires_text}{limit_text}"
+    if kind == "ORDER_COUNT":
+        count = normalize_int(promo.get("required_orders"), 0)
+        return f"Mua đủ {count} đơn đã giao sẽ nhận 1 mã giảm {discount} cho đơn tiếp theo.{expires_text}{limit_text}"
+    if kind == "PRIVATE":
+        return f"Bạn có mã riêng {code}, giảm {discount} cho đơn phù hợp.{expires_text}"
+    return f"Nhập mã {code} để nhận mã riêng giảm {discount} cho đơn phù hợp.{expires_text}{limit_text}"
+
+def product_promo_notice(user_id: int, stock_code: str = "", subtotal: int = 0) -> str:
+    lines: List[str] = []
+    for award in available_promo_awards(user_id, subtotal, stock_code)[:3]:
+        code = str(award.get("code") or "").strip()
+        discount = normalize_int(award.get("discount_amount") or award.get("discount_percent"), 0)
+        min_total = normalize_int(award.get("min_order_total"), 0)
+        min_text = f", đơn từ {fmt_price(min_total)}" if min_total > 0 else ""
+        lines.append(f"Bạn đang có mã {code} giảm {fmt_price(discount)}{min_text}. Bấm Nhập mã khuyến mãi khi thanh toán để dùng.")
+    for promo in active_promotions():
+        notice = promo_public_notice(promo, stock_code, user_id)
+        if notice and notice not in lines:
+            lines.append(notice)
+        if len(lines) >= 4:
+            break
+    if not lines:
+        return ""
+    safe_lines = [line.replace("`", "'") for line in lines]
+    return "🎁 *Khuyến mãi cho sản phẩm này:*\n" + "\n".join(f"• {line}" for line in safe_lines)
+
 def best_public_promotion(subtotal: int = 0, stock_code: str = "") -> Optional[Dict[str, str]]:
     subtotal = normalize_int(subtotal, 0)
     candidates = []
@@ -2219,6 +2268,8 @@ def build_products_menu_kb(
 
 
 def product_detail_text(p: Dict[str, Any], ready_qty: int) -> str:
+    promo_notice = str(p.get("promo_notice") or "").strip()
+    promo_block = f"\n\n{promo_notice}\n" if promo_notice else "\n"
     if is_slot_product(p):
         limit = slot_limit(p)
         used = normalize_int(p.get("slot_used"), 0)
@@ -2235,6 +2286,7 @@ def product_detail_text(p: Dict[str, Any], ready_qty: int) -> str:
             f"{capacity}"
             f"📝 *Mô tả:*\n{desc}\n"
             f"📌 Trạng thái: {status}\n"
+            f"{promo_block}"
             "━━━━━━━━━━━━━━━━━━\n\n"
             "👇 Bấm mua, bot sẽ hỏi email đăng ký slot rồi tạo mã QR thanh toán."
         )
@@ -2256,6 +2308,7 @@ def product_detail_text(p: Dict[str, Any], ready_qty: int) -> str:
         f"📦 Còn lại: *{ready_qty}*\n"
         f"📝 *Mô tả:*\n{desc}\n"
         f"📌 Trạng thái: {status}\n"
+        f"{promo_block}"
         "━━━━━━━━━━━━━━━━━━\n\n"
         "⚡ Thanh toán xong hệ thống *giao tự động*.\n"
         "👇 Chọn chức năng bên dưới:"
@@ -2653,7 +2706,7 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
         discount = normalize_int(promo_award.get("discount_amount") or promo_award.get("discount_percent"), 0)
         min_total = normalize_int(promo_award.get("min_order_total"), 0)
         min_note = f" cho đơn từ {fmt_price(min_total)}" if min_total > 0 else ""
-        promo_lines.append(f"Bạn đang có mã `{escape_markdown(code, version=1)}` giảm *{fmt_price(discount)}*{min_note}. Bot sẽ tự áp khi tạo đơn.")
+        promo_lines.append(f"Bạn đang có mã `{escape_markdown(code, version=1)}` giảm *{fmt_price(discount)}*{min_note}. Bấm *Nhập mã khuyến mãi* khi thanh toán để dùng.")
     promo_block = f"\n\n🎁 *Khuyến mãi:*\n" + "\n".join(promo_lines) if promo_lines else ""
     text = (
         "🛍 *MENU SẢN PHẨM*\n\n"
@@ -2690,6 +2743,12 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
             {p["stock_code"]: bool(p.get("pricing_enabled", True))},
         )
         p = {**p, **stock_prices.get(p["stock_code"], {})}
+    try:
+        await gs_call(award_promotions_for_user, q.from_user.id)
+        promo_notice = await gs_call(product_promo_notice, q.from_user.id, p["stock_code"], normalize_int(p.get("price"), 0))
+        p = {**p, "promo_notice": promo_notice}
+    except Exception as exc:
+        logger.warning("product promo notice skipped user=%s stock=%s: %s", q.from_user.id, p.get("stock_code"), exc)
     await q.edit_message_text(
         product_detail_text(p, ready),
         parse_mode="Markdown",
