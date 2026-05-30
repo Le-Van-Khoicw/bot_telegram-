@@ -10,6 +10,7 @@ import { Badge } from "../ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
 import { Switch } from "../ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Textarea } from "../ui/textarea";
 import { adminApi, money, text, type AdminSnapshot, type AnyRow } from "../../api";
 
 interface Props {
@@ -248,7 +249,15 @@ export function Products({ data, adminKey, refresh }: Props) {
                 onCheckedChange={(checked) => setForm({ ...form, pricing_enabled: checked ? "true" : "false" })}
               />
             </div>
-            <div className="space-y-1"><Label>Mô tả</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
+            <div className="space-y-1">
+              <Label>Mô tả</Label>
+              <Textarea
+                className="min-h-28"
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Có thể xuống dòng bằng Enter"
+              />
+            </div>
           </div>
           <DialogFooter>
             {form.product_id && (
