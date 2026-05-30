@@ -651,6 +651,7 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
     threshold_qty = max(0, shop.normalize_int(data.get("threshold_qty"), 0))
     max_claims = max(0, shop.normalize_int(data.get("max_claims"), 0))
     target_user_id = str(data.get("target_user_id") or "").strip()
+    count_from_created = "TRUE" if shop.normalize_bool(data.get("count_from_created"), True) else "FALSE"
     expires_days = max(1, shop.normalize_int(data.get("expires_days"), 7))
     status = str(data.get("status") or "ACTIVE").strip().upper()
     if status not in ("ACTIVE", "PAUSED"):
@@ -670,6 +671,7 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
         "threshold_qty": threshold_qty,
         "max_claims": max_claims,
         "target_user_id": target_user_id,
+        "count_from_created": count_from_created,
         "expires_days": expires_days,
         "status": status,
         "note": str(data.get("note") or ""),

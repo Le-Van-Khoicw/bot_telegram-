@@ -31,6 +31,7 @@ const EMPTY = {
   threshold_qty: "0",
   max_claims: "0",
   target_user_id: "",
+  count_from_created: "TRUE",
   expires_days: "7",
   status: "ACTIVE",
   note: "",
@@ -88,6 +89,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
       form.promo_type === "ORDER_COUNT" ? `tự tặng mã sau ${plainNumber(form.required_orders)} đơn đã giao` :
       form.promo_type === "PRIVATE" ? `mã riêng cho user ${form.target_user_id || "chưa nhập"}` :
       "mã public, khách nhập mã gốc để nhận mã riêng",
+    form.count_from_created === "TRUE" ? "chỉ tính đơn từ lúc tạo mã" : "tính cả đơn cũ",
     Number(form.max_claims || 0) > 0 ? `tối đa ${plainNumber(form.max_claims)} mã` : "không giới hạn số mã",
   ].join(" | ");
 
@@ -118,6 +120,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
       threshold_qty: blank(promo.threshold_qty) ? "0" : text(promo.threshold_qty),
       max_claims: blank(promo.max_claims) ? "0" : text(promo.max_claims),
       target_user_id: blank(promo.target_user_id) ? "" : text(promo.target_user_id),
+      count_from_created: blank(promo.count_from_created) || text(promo.count_from_created).toUpperCase() !== "FALSE" ? "TRUE" : "FALSE",
       expires_days: blank(promo.expires_days) ? "7" : text(promo.expires_days),
       status: text(promo.status) === "PAUSED" ? "PAUSED" : "ACTIVE",
       note: blank(promo.note) ? "" : text(promo.note),
@@ -368,6 +371,16 @@ export function Promotions({ data, adminKey, refresh }: Props) {
               <Label>Số mã tối đa được phát</Label>
               <Input inputMode="numeric" value={form.max_claims} onChange={(event) => setForm({ ...form, max_claims: plainNumber(event.target.value) })} placeholder="0 = không giới hạn, VD: 20" />
               <p className="text-xs text-muted-foreground">Nhập 20 thì chỉ 20 mã con đầu tiên được tạo. Mỗi khách nhận một mã riêng.</p>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+              <div>
+                <Label>Tính mốc từ lúc tạo mã</Label>
+                <p className="text-xs text-muted-foreground">Bật để không tính các đơn cũ trước khi tạo khuyến mãi.</p>
+              </div>
+              <Switch
+                checked={form.count_from_created !== "FALSE"}
+                onCheckedChange={(checked) => setForm({ ...form, count_from_created: checked ? "TRUE" : "FALSE" })}
+              />
             </div>
             <div className="space-y-1">
               <Label>Stock Code áp dụng khi dùng mã</Label>

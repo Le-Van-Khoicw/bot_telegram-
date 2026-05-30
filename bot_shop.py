@@ -126,7 +126,7 @@ CHECKOUT_IN_PROGRESS: set[int] = set()
 PROMOTION_HEADERS = [
     "id", "code", "promo_type", "discount_amount", "min_order_total", "stock_code",
     "threshold_amount", "required_orders", "threshold_qty", "max_claims", "target_user_id",
-    "expires_days", "status", "note", "created_at", "updated_at",
+    "count_from_created", "expires_days", "status", "note", "created_at", "updated_at",
 ]
 PROMO_AWARD_HEADERS = [
     "user_id", "username", "full_name", "promo_id", "cycle", "code", "discount_amount",
@@ -913,6 +913,12 @@ def promo_type(promo: Dict[str, str]) -> str:
         return "ORDER_COUNT"
     return "PUBLIC"
 
+def promo_count_from_created(promo: Dict[str, str]) -> bool:
+    raw = str(promo.get("count_from_created") or "").strip().upper()
+    if raw in {"FALSE", "NO", "0", "OFF", "TAT", "TẮT"}:
+        return False
+    return True
+
 def promo_matches_stock(promo_or_award: Dict[str, str], stock_code: str = "") -> bool:
     target = str(promo_or_award.get("stock_code") or "").strip().upper()
     if not target:
@@ -942,6 +948,20 @@ def delivered_orders_for_user(user_id: int) -> List[Dict[str, str]]:
         if str(order.get("status") or "").strip().upper() == "DELIVERED":
             rows.append(order)
     return rows
+
+def delivered_orders_for_promo(user_id: int, promo: Dict[str, str]) -> List[Dict[str, str]]:
+    rows = delivered_orders_for_user(user_id)
+    if not promo_count_from_created(promo):
+        return rows
+    promo_created = parse_dt(str(promo.get("created_at") or ""))
+    if not promo_created:
+        return rows
+    filtered = []
+    for order in rows:
+        order_dt = parse_dt(str(order.get("delivered_at") or order.get("paid_at") or order.get("created_at") or ""))
+        if order_dt and order_dt >= promo_created:
+            filtered.append(order)
+    return filtered
 
 def promo_existing_awards(existing: List[Dict[str, str]], promo_id: str) -> List[Dict[str, str]]:
     return [row for row in existing if str(row.get("promo_id") or "").strip() == str(promo_id)]
@@ -984,9 +1004,6 @@ def user_profile_from_sheet(user_id: int) -> Dict[str, str]:
 def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
     ws = promo_awards_ws()
     existing = get_all_records(ws)
-    delivered_orders = delivered_orders_for_user(user_id)
-    delivered_count = len(delivered_orders)
-    delivered_amount = sum(normalize_int(o.get("total"), 0) for o in delivered_orders)
     profile = user_profile_from_sheet(user_id)
     now = now_str()
     awarded: List[Dict[str, str]] = []
@@ -1017,12 +1034,15 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
             continue
         stock_code = str(promo.get("stock_code") or "").strip().upper()
         kind = promo_type(promo)
+        promo_orders = delivered_orders_for_promo(user_id, promo)
+        delivered_count = len(promo_orders)
+        delivered_amount = sum(normalize_int(o.get("total"), 0) for o in promo_orders)
         if kind == "AMOUNT":
             threshold = normalize_int(promo.get("threshold_amount"), 0)
             earned_cycles = delivered_amount // threshold if threshold > 0 else 0
         elif kind == "ORDER_QTY":
             threshold_qty = normalize_int(promo.get("threshold_qty"), 0)
-            earned_cycles = sum(1 for o in delivered_orders if normalize_int(o.get("qty"), 1) >= threshold_qty) if threshold_qty > 0 else 0
+            earned_cycles = sum(1 for o in promo_orders if normalize_int(o.get("qty"), 1) >= threshold_qty) if threshold_qty > 0 else 0
         elif kind == "ORDER_COUNT":
             required = normalize_int(promo.get("required_orders"), 0)
             earned_cycles = delivered_count // required if required > 0 else 0
