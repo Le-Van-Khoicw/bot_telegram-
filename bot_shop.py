@@ -123,8 +123,16 @@ PENDING_SLOT_EMAIL: Dict[int, Dict[str, str]] = {}  # user_id -> {"slot_id": ...
 SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}
 SESSION_EXPIRY_SECONDS = 600  # 10 minutes
 CHECKOUT_IN_PROGRESS: set[int] = set()
-PROMOTION_HEADERS = ["id", "code", "discount_amount", "min_order_total", "stock_code", "required_orders", "expires_days", "status", "note", "created_at", "updated_at"]
-PROMO_AWARD_HEADERS = ["user_id", "username", "full_name", "promo_id", "cycle", "code", "discount_amount", "min_order_total", "stock_code", "status", "awarded_at", "expires_at", "used_order_id", "used_at"]
+PROMOTION_HEADERS = [
+    "id", "code", "promo_type", "discount_amount", "min_order_total", "stock_code",
+    "threshold_amount", "required_orders", "threshold_qty", "max_claims", "target_user_id",
+    "expires_days", "status", "note", "created_at", "updated_at",
+]
+PROMO_AWARD_HEADERS = [
+    "user_id", "username", "full_name", "promo_id", "cycle", "code", "discount_amount",
+    "min_order_total", "stock_code", "status", "awarded_at", "expires_at", "used_order_id",
+    "used_at",
+]
 PROMO_SETTINGS_HEADERS = ["key", "value", "updated_at"]
 SLOT_HEADERS = ["slot_id", "title", "price", "total_slots", "status", "note", "created_at", "updated_at"]
 SLOT_PARTICIPANT_HEADERS = ["slot_id", "user_id", "username", "full_name", "email", "order_id", "status", "paid_at", "joined_at", "done_at", "note"]
@@ -884,6 +892,18 @@ def active_promotion_by_code(code: str) -> Optional[Dict[str, str]]:
             return promo
     return None
 
+def promo_type(promo: Dict[str, str]) -> str:
+    raw = str(promo.get("promo_type") or "").strip().upper()
+    if raw in {"AMOUNT", "ORDER_COUNT", "ORDER_QTY", "PRIVATE", "PUBLIC"}:
+        return raw
+    if normalize_int(promo.get("threshold_amount"), 0) > 0:
+        return "AMOUNT"
+    if normalize_int(promo.get("threshold_qty"), 0) > 0:
+        return "ORDER_QTY"
+    if normalize_int(promo.get("required_orders"), 0) > 0:
+        return "ORDER_COUNT"
+    return "PUBLIC"
+
 def promo_matches_stock(promo_or_award: Dict[str, str], stock_code: str = "") -> bool:
     target = str(promo_or_award.get("stock_code") or "").strip().upper()
     if not target:
@@ -904,6 +924,42 @@ def count_delivered_orders_for_user(user_id: int) -> int:
             count += 1
     return count
 
+def delivered_orders_for_user(user_id: int) -> List[Dict[str, str]]:
+    init_sheets()
+    rows = []
+    for order in get_all_records(_ws_orders):
+        if str(order.get("user_id") or "").strip() != str(user_id):
+            continue
+        if str(order.get("status") or "").strip().upper() == "DELIVERED":
+            rows.append(order)
+    return rows
+
+def promo_existing_awards(existing: List[Dict[str, str]], promo_id: str) -> List[Dict[str, str]]:
+    return [row for row in existing if str(row.get("promo_id") or "").strip() == str(promo_id)]
+
+def promo_claim_limit_reached(existing: List[Dict[str, str]], promo: Dict[str, str]) -> bool:
+    max_claims = normalize_int(promo.get("max_claims"), 0)
+    if max_claims <= 0:
+        return False
+    promo_id = str(promo.get("id") or "").strip()
+    return len(promo_existing_awards(existing, promo_id)) >= max_claims
+
+def unique_promo_code(base: str, user_id: int, cycle: int, existing_codes: set[str]) -> str:
+    suffix = str(user_id)[-4:] if str(user_id) else "0000"
+    seed = f"{base}{suffix}" if cycle <= 1 else f"{base}{suffix}-{cycle}"
+    code = seed.upper()
+    if code not in existing_codes:
+        existing_codes.add(code)
+        return code
+    for attempt in range(10, 1000):
+        code = f"{seed}{attempt}".upper()
+        if code not in existing_codes:
+            existing_codes.add(code)
+            return code
+    code = f"{seed}{int(time.time()) % 100000}".upper()
+    existing_codes.add(code)
+    return code
+
 def user_profile_from_sheet(user_id: int) -> Dict[str, str]:
     init_sheets()
     target = str(user_id)
@@ -919,11 +975,14 @@ def user_profile_from_sheet(user_id: int) -> Dict[str, str]:
 def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
     ws = promo_awards_ws()
     existing = get_all_records(ws)
-    delivered_count = count_delivered_orders_for_user(user_id)
+    delivered_orders = delivered_orders_for_user(user_id)
+    delivered_count = len(delivered_orders)
+    delivered_amount = sum(normalize_int(o.get("total"), 0) for o in delivered_orders)
     profile = user_profile_from_sheet(user_id)
     now = now_str()
     awarded: List[Dict[str, str]] = []
     existing_keys = set()
+    existing_codes = {str(row.get("code") or "").strip().upper() for row in existing if str(row.get("code") or "").strip()}
     for row in existing:
         uid = str(row.get("user_id") or "").strip()
         promo_id = str(row.get("promo_id") or "").strip()
@@ -938,21 +997,40 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
     for promo in active_promotions():
         promo_id = str(promo.get("id") or "").strip()
         code_base = str(promo.get("code") or "").strip().upper()
-        required = normalize_int(promo.get("required_orders"), 0)
         discount = normalize_int(promo.get("discount_amount") or promo.get("discount_percent"), 0)
         min_order_total = normalize_int(promo.get("min_order_total"), 0)
-        if not promo_id or not code_base or required <= 0 or discount <= 0:
+        if not promo_id or not code_base or discount <= 0:
+            continue
+        target_user = str(promo.get("target_user_id") or "").strip()
+        if target_user and target_user != str(user_id):
+            continue
+        if promo_claim_limit_reached(existing, promo):
             continue
         stock_code = str(promo.get("stock_code") or "").strip().upper()
-        earned_cycles = delivered_count // required
+        kind = promo_type(promo)
+        if kind == "AMOUNT":
+            threshold = normalize_int(promo.get("threshold_amount"), 0)
+            earned_cycles = delivered_amount // threshold if threshold > 0 else 0
+        elif kind == "ORDER_QTY":
+            threshold_qty = normalize_int(promo.get("threshold_qty"), 0)
+            earned_cycles = sum(1 for o in delivered_orders if normalize_int(o.get("qty"), 1) >= threshold_qty) if threshold_qty > 0 else 0
+        elif kind == "ORDER_COUNT":
+            required = normalize_int(promo.get("required_orders"), 0)
+            earned_cycles = delivered_count // required if required > 0 else 0
+        elif kind == "PRIVATE":
+            earned_cycles = 1 if target_user == str(user_id) else 0
+        else:
+            earned_cycles = 0
         if earned_cycles <= 0:
             continue
         expires_days = normalize_int(promo.get("expires_days"), 7)
         for cycle in range(1, earned_cycles + 1):
             if (str(user_id), promo_id, cycle) in existing_keys:
                 continue
+            if promo_claim_limit_reached(existing + awarded, promo):
+                break
             expires_at = (now_dt() + timedelta(days=max(1, expires_days))).strftime("%Y-%m-%d %H:%M:%S")
-            code = f"{code_base}{str(user_id)[-4:]}" if cycle == 1 else f"{code_base}{str(user_id)[-4:]}-{cycle}"
+            code = unique_promo_code(code_base, user_id, cycle, existing_codes)
             award = {
                 "user_id": str(user_id),
                 "username": profile.get("username", ""),
@@ -979,6 +1057,46 @@ def award_promotions_for_user(user_id: int) -> List[Dict[str, str]]:
     if rows_to_append:
         ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
     return awarded
+
+def grant_promotion_to_user(promo: Dict[str, str], user_id: int) -> Optional[Dict[str, str]]:
+    ws = promo_awards_ws()
+    existing = get_all_records(ws)
+    promo_id = str(promo.get("id") or "").strip()
+    code_base = str(promo.get("code") or "").strip().upper()
+    discount = normalize_int(promo.get("discount_amount") or promo.get("discount_percent"), 0)
+    if not promo_id or not code_base or discount <= 0 or user_id <= 0:
+        return None
+    if any(str(row.get("user_id") or "").strip() == str(user_id) and str(row.get("promo_id") or "").strip() == promo_id for row in existing):
+        return None
+    if promo_claim_limit_reached(existing, promo):
+        return None
+    profile = user_profile_from_sheet(user_id)
+    existing_codes = {str(row.get("code") or "").strip().upper() for row in existing if str(row.get("code") or "").strip()}
+    expires_days = normalize_int(promo.get("expires_days"), 7)
+    award = {
+        "user_id": str(user_id),
+        "username": profile.get("username", ""),
+        "full_name": profile.get("full_name", ""),
+        "promo_id": promo_id,
+        "cycle": "1",
+        "code": unique_promo_code(code_base, user_id, 1, existing_codes),
+        "discount_amount": str(discount),
+        "min_order_total": str(normalize_int(promo.get("min_order_total"), 0)),
+        "stock_code": str(promo.get("stock_code") or "").strip().upper(),
+        "status": "ACTIVE",
+        "awarded_at": now_str(),
+        "expires_at": (now_dt() + timedelta(days=max(1, expires_days))).strftime("%Y-%m-%d %H:%M:%S"),
+        "used_order_id": "",
+        "used_at": "",
+    }
+    headers = headers_map(ws)
+    row = [""] * len(headers)
+    for key, value in award.items():
+        col = headers.get(key.lower())
+        if col:
+            row[col - 1] = value
+    ws.append_row(row, value_input_option="USER_ENTERED")
+    return award
 
 def best_available_promo_award(user_id: int, subtotal: int = 0, stock_code: str = "") -> Optional[Dict[str, str]]:
     now = now_dt()
@@ -1008,6 +1126,45 @@ def best_available_promo_award(user_id: int, subtotal: int = 0, stock_code: str 
     candidates.sort(key=lambda x: normalize_int(x.get("discount_amount") or x.get("discount_percent"), 0), reverse=True)
     return candidates[0] if candidates else None
 
+def available_promo_awards(user_id: int, subtotal: int = 0, stock_code: str = "") -> List[Dict[str, str]]:
+    now = now_dt()
+    subtotal = normalize_int(subtotal, 0)
+    active_ids = active_promotion_ids()
+    rows = []
+    for row in get_all_records(promo_awards_ws()):
+        if str(row.get("user_id") or "").strip() != str(user_id):
+            continue
+        promo_id = str(row.get("promo_id") or "").strip()
+        if promo_id and promo_id not in active_ids:
+            continue
+        if str(row.get("status") or "").strip().upper() != "ACTIVE":
+            continue
+        exp = parse_dt(str(row.get("expires_at") or ""))
+        if exp and exp < now:
+            continue
+        discount = normalize_int(row.get("discount_amount") or row.get("discount_percent"), 0)
+        min_order_total = normalize_int(row.get("min_order_total"), 0)
+        if discount <= 0 or (subtotal > 0 and min_order_total > subtotal):
+            continue
+        if not promo_matches_stock(row, stock_code):
+            continue
+        rows.append(row)
+    rows.sort(key=lambda x: normalize_int(x.get("discount_amount") or x.get("discount_percent"), 0), reverse=True)
+    return rows
+
+def available_promo_codes_text(user_id: int, subtotal: int = 0, stock_code: str = "") -> str:
+    awards = available_promo_awards(user_id, subtotal, stock_code)[:5]
+    if not awards:
+        return "Bạn chưa có mã riêng phù hợp với đơn này."
+    lines = ["Mã riêng bạn đang có:"]
+    for award in awards:
+        code = str(award.get("code") or "").strip()
+        discount = fmt_price(normalize_int(award.get("discount_amount") or award.get("discount_percent"), 0))
+        min_total = normalize_int(award.get("min_order_total"), 0)
+        min_text = f", đơn từ {fmt_price(min_total)}" if min_total > 0 else ""
+        lines.append(f"- {code}: giảm {discount}{min_text}")
+    return "\n".join(lines)
+
 def best_public_promotion(subtotal: int = 0, stock_code: str = "") -> Optional[Dict[str, str]]:
     subtotal = normalize_int(subtotal, 0)
     candidates = []
@@ -1035,15 +1192,9 @@ def best_public_promotion(subtotal: int = 0, stock_code: str = "") -> Optional[D
     return candidates[0] if candidates else None
 
 def best_checkout_promo(user_id: int, subtotal: int = 0, stock_code: str = "") -> Optional[Dict[str, str]]:
-    award = best_available_promo_award(user_id, subtotal, stock_code)
-    public = best_public_promotion(subtotal, stock_code)
-    if not award:
-        return public
-    if not public:
-        return award
-    award_discount = normalize_int(award.get("discount_amount") or award.get("discount_percent"), 0)
-    public_discount = normalize_int(public.get("discount_amount") or public.get("discount_percent"), 0)
-    return public if public_discount > award_discount else award
+    # Promo codes are intentionally not auto-applied. The bot only suggests/awards
+    # private codes, then the customer chooses which one to enter during checkout.
+    return best_available_promo_award(user_id, subtotal, stock_code)
 
 def claim_manual_promo_code(user_id: int, code: str, subtotal: int, stock_code: str = "") -> Optional[Dict[str, str]]:
     code = str(code or "").strip().upper()
@@ -1076,7 +1227,11 @@ def claim_manual_promo_code(user_id: int, code: str, subtotal: int, stock_code: 
     promo = active_promotion_by_code(code)
     if not promo:
         return None
-    if normalize_int(promo.get("required_orders"), 0) > 0:
+    if promo_type(promo) not in {"PUBLIC", "PRIVATE"}:
+        return None
+    if promo_type(promo) == "PRIVATE" and str(promo.get("target_user_id") or "").strip() != str(user_id):
+        return None
+    if promo_claim_limit_reached(existing, promo):
         return None
     discount = normalize_int(promo.get("discount_amount") or promo.get("discount_percent"), 0)
     min_order_total = normalize_int(promo.get("min_order_total"), 0)
@@ -1088,13 +1243,15 @@ def claim_manual_promo_code(user_id: int, code: str, subtotal: int, stock_code: 
     profile = user_profile_from_sheet(user_id)
     expires_days = normalize_int(promo.get("expires_days"), 7)
     promo_stock_code = str(promo.get("stock_code") or "").strip().upper()
+    existing_codes = {str(row.get("code") or "").strip().upper() for row in existing if str(row.get("code") or "").strip()}
+    child_code = unique_promo_code(code, user_id, 1, existing_codes)
     award = {
         "user_id": str(user_id),
         "username": profile.get("username", ""),
         "full_name": profile.get("full_name", ""),
         "promo_id": str(promo.get("id") or "").strip(),
         "cycle": "manual",
-        "code": code,
+        "code": child_code,
         "discount_amount": str(discount),
         "min_order_total": str(min_order_total),
         "stock_code": promo_stock_code,
@@ -2638,14 +2795,10 @@ async def handle_slot_email_input(update: Update, context: ContextTypes.DEFAULT_
     subtotal = normalize_int(slot.get("price"), 0)
     try:
         await gs_call(award_promotions_for_user, user_id)
-        promo_award = await gs_call(best_checkout_promo, user_id, subtotal, stock_code)
     except Exception as exc:
         logger.warning("slot promo lookup failed user=%s: %s", user_id, exc)
-        promo_award = None
-    promo_code = str((promo_award or {}).get("code") or "").strip()
-    promo_amount = normalize_int((promo_award or {}).get("discount_amount") or (promo_award or {}).get("discount_percent"), 0)
-    promo_min_total = normalize_int((promo_award or {}).get("min_order_total"), 0)
-    promo_discount = min(subtotal, promo_amount) if promo_code and promo_amount > 0 and subtotal >= promo_min_total else 0
+    promo_code = ""
+    promo_discount = 0
     total = max(0, subtotal - promo_discount)
     created_at = now_str()
     await gs_call(append_order, {
@@ -2870,7 +3023,7 @@ async def send_awarded_promos(context: ContextTypes.DEFAULT_TYPE, user_id: int, 
                     f"Mã: `{award.get('code')}`\n"
                     f"Giảm: *{fmt_price(normalize_int(award.get('discount_amount') or award.get('discount_percent'), 0))}* cho đơn tiếp theo\n"
                     f"Hạn dùng: `{award.get('expires_at')}`\n\n"
-                    "Đơn sau bot sẽ tự áp mã còn hiệu lực cho bạn."
+                    "Khi tạo đơn mới, bấm *Nhập mã khuyến mãi* rồi dán mã này để được giảm."
                 ),
                 parse_mode="Markdown",
                 reply_markup=main_menu_keyboard(),
@@ -3085,23 +3238,10 @@ async def checkout_flow(
     subtotal = sum(normalize_int(item.get("price"), int(product["price"])) for item in reserved_items)
     try:
         await gs_call(award_promotions_for_user, user_id)
-        promo_award = await gs_call(best_checkout_promo, user_id, subtotal, product["stock_code"])
     except Exception as exc:
         logger.warning("promo lookup failed user=%s: %s", user_id, exc)
-        promo_award = None
-    promo_code = str((promo_award or {}).get("code") or "")
-    promo_amount = normalize_int((promo_award or {}).get("discount_amount") or (promo_award or {}).get("discount_percent"), 0)
-    promo_min_total = normalize_int((promo_award or {}).get("min_order_total"), 0)
-    promo_discount = min(subtotal, promo_amount) if promo_code and promo_amount > 0 and subtotal >= promo_min_total else 0
-    if promo_code and promo_discount > 0:
-        logger.info(
-            "promo applied user=%s code=%s subtotal=%s discount=%s total=%s",
-            user_id,
-            promo_code,
-            subtotal,
-            promo_discount,
-            max(0, subtotal - promo_discount),
-        )
+    promo_code = ""
+    promo_discount = 0
     total = max(0, subtotal - promo_discount)
     unit_price = round(subtotal / qty) if qty > 0 else int(product["price"])
     price_notes = []
@@ -3272,12 +3412,20 @@ async def prompt_promo_code(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return await q.answer("⛔ Bạn không có quyền thao tác đơn này.", show_alert=True)
     if str(order.get("status") or "").strip().upper() != "PENDING":
         return await q.answer("Đơn này không còn chờ thanh toán.", show_alert=True)
+    subtotal = normalize_int(order.get("subtotal"), normalize_int(order.get("total"), 0) + normalize_int(order.get("promo_discount"), 0))
+    try:
+        await gs_call(award_promotions_for_user, q.from_user.id)
+        promo_hint = await gs_call(available_promo_codes_text, q.from_user.id, subtotal, order.get("stock_code", ""))
+    except Exception as exc:
+        logger.warning("load user promo hint failed user=%s: %s", q.from_user.id, exc)
+        promo_hint = "Nếu bạn có mã riêng, hãy nhập mã vào đây."
     PENDING_PROMO_INPUT[q.from_user.id] = {"order_id": order_id}
     await context.bot.send_message(
         chat_id=q.from_user.id,
         text=(
             "🎁 Nhập mã khuyến mãi cho đơn này.\n\n"
-            "Ví dụ: `TANGGPT100`\n"
+            f"{escape_markdown(promo_hint, version=1)}\n\n"
+            "Bạn nhập đúng mã riêng bot đã phát. Mỗi mã chỉ dùng được 1 lần.\n"
             "Gõ `huy` nếu không muốn nhập nữa."
         ),
         parse_mode="Markdown",

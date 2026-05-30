@@ -22,10 +22,15 @@ interface Props {
 const EMPTY = {
   id: "",
   code: "",
+  promo_type: "AMOUNT",
   discount_amount: "20000",
   min_order_total: "0",
   stock_code: "",
+  threshold_amount: "500000",
   required_orders: "0",
+  threshold_qty: "0",
+  max_claims: "0",
+  target_user_id: "",
   expires_days: "7",
   status: "ACTIVE",
   note: "",
@@ -78,7 +83,12 @@ export function Promotions({ data, adminKey, refresh }: Props) {
     `Giam ${shortMoney(form.discount_amount)}`,
     `chi ap dung khi tong tien don tu ${shortMoney(form.min_order_total)}`,
     form.stock_code ? `stock ${form.stock_code}` : "tat ca san pham",
-    Number(form.required_orders || 0) > 0 ? `tu tang ma sau ${form.required_orders} don da giao` : "ma public, ap ngay khi khach mua",
+    form.promo_type === "AMOUNT" ? `tu tang ma khi khach tich du ${shortMoney(form.threshold_amount)}` :
+      form.promo_type === "ORDER_QTY" ? `tu tang ma khi 1 don mua tu ${form.threshold_qty || 0} san pham` :
+      form.promo_type === "ORDER_COUNT" ? `tu tang ma sau ${form.required_orders || 0} don da giao` :
+      form.promo_type === "PRIVATE" ? `ma rieng cho user ${form.target_user_id || "chua nhap"}` :
+      "ma public, khach nhap ma goc de nhan ma rieng",
+    Number(form.max_claims || 0) > 0 ? `toi da ${form.max_claims} ma` : "khong gioi han so ma",
   ].join(" | ");
 
   const syncSettings = () => {
@@ -99,10 +109,15 @@ export function Promotions({ data, adminKey, refresh }: Props) {
     setForm({
       id: blank(promo.id) ? "" : text(promo.id),
       code: blank(promo.code) ? "" : text(promo.code),
+      promo_type: blank(promo.promo_type) ? "ORDER_COUNT" : text(promo.promo_type),
       discount_amount: blank(promo.discount_amount || promo.discount_percent) ? "20000" : text(promo.discount_amount || promo.discount_percent),
       min_order_total: blank(promo.min_order_total) ? "0" : text(promo.min_order_total),
       stock_code: blank(promo.stock_code) ? "" : text(promo.stock_code),
+      threshold_amount: blank(promo.threshold_amount) ? "0" : text(promo.threshold_amount),
       required_orders: blank(promo.required_orders) ? "0" : text(promo.required_orders),
+      threshold_qty: blank(promo.threshold_qty) ? "0" : text(promo.threshold_qty),
+      max_claims: blank(promo.max_claims) ? "0" : text(promo.max_claims),
+      target_user_id: blank(promo.target_user_id) ? "" : text(promo.target_user_id),
       expires_days: blank(promo.expires_days) ? "7" : text(promo.expires_days),
       status: text(promo.status) === "PAUSED" ? "PAUSED" : "ACTIVE",
       note: blank(promo.note) ? "" : text(promo.note),
@@ -119,7 +134,10 @@ export function Promotions({ data, adminKey, refresh }: Props) {
           ...form,
           discount_amount: moneyInputToNumber(form.discount_amount),
           min_order_total: moneyInputToNumber(form.min_order_total),
+          threshold_amount: moneyInputToNumber(form.threshold_amount),
           required_orders: plainNumber(form.required_orders),
+          threshold_qty: plainNumber(form.threshold_qty),
+          max_claims: plainNumber(form.max_claims),
         }),
       });
       toast.success("Da luu khuyen mai");
@@ -187,7 +205,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
             className="min-h-24"
             value={menuText}
             onChange={(event) => setMenuText(event.target.value)}
-            placeholder="Vi du: Mua du 10 don bat ky nhan ma giam gia cho don tiep theo. Neu co ma con hieu luc, bot se tu ap khi tao don."
+            placeholder="Vi du: Mua du moc se nhan ma rieng. Khi thanh toan, bam Nhap ma khuyen mai va dan ma cua ban de duoc giam."
           />
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={syncSettings}>Hoan tac</Button>
@@ -202,9 +220,11 @@ export function Promotions({ data, adminKey, refresh }: Props) {
             <TableHeader>
               <TableRow>
                 <TableHead>Ma</TableHead>
+                <TableHead>Loai</TableHead>
                 <TableHead className="text-center">Giam</TableHead>
                 <TableHead className="text-center">Tien don toi thieu</TableHead>
-                <TableHead className="text-center">Tang sau bao nhieu don</TableHead>
+                <TableHead className="text-center">Moc nhan ma</TableHead>
+                <TableHead className="text-center">So ma toi da</TableHead>
                 <TableHead className="text-center">Stock</TableHead>
                 <TableHead className="text-center">Han dung</TableHead>
                 <TableHead className="text-center">Trang thai</TableHead>
@@ -216,9 +236,16 @@ export function Promotions({ data, adminKey, refresh }: Props) {
               {promotions.map((promo) => (
                 <TableRow key={text(promo.id || promo.code)}>
                   <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.code)}</code></TableCell>
+                  <TableCell className="text-xs">{text(promo.promo_type || "ORDER_COUNT")}</TableCell>
                   <TableCell className="text-center">{money(promo.discount_amount || promo.discount_percent)}</TableCell>
                   <TableCell className="text-center">{money(promo.min_order_total)}</TableCell>
-                  <TableCell className="text-center">{Number(promo.required_orders || 0) > 0 ? `${text(promo.required_orders)} don` : "Public"}</TableCell>
+                  <TableCell className="text-center">
+                    {text(promo.promo_type) === "AMOUNT" ? money(promo.threshold_amount) :
+                      text(promo.promo_type) === "ORDER_QTY" ? `${text(promo.threshold_qty)} sp / 1 don` :
+                      text(promo.promo_type) === "PRIVATE" ? `User ${text(promo.target_user_id)}` :
+                      Number(promo.required_orders || 0) > 0 ? `${text(promo.required_orders)} don` : "Public"}
+                  </TableCell>
+                  <TableCell className="text-center">{Number(promo.max_claims || 0) > 0 ? text(promo.max_claims) : "Khong gioi han"}</TableCell>
                   <TableCell className="text-center">{blank(promo.stock_code) ? "Tat ca" : <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.stock_code)}</code>}</TableCell>
                   <TableCell className="text-center">{text(promo.expires_days)} ngay</TableCell>
                   <TableCell className="text-center"><Badge variant={text(promo.status) === "PAUSED" ? "outline" : "default"}>{statusLabel(promo.status)}</Badge></TableCell>
@@ -228,7 +255,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   </TableCell>
                 </TableRow>
               ))}
-              {!promotions.length && <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">Chua co ma khuyen mai</TableCell></TableRow>}
+              {!promotions.length && <TableRow><TableCell colSpan={11} className="py-8 text-center text-muted-foreground">Chua co ma khuyen mai</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>
@@ -279,6 +306,19 @@ export function Promotions({ data, adminKey, refresh }: Props) {
           <DialogHeader><DialogTitle>{form.id ? "Sua ma khuyen mai" : "Them ma khuyen mai"}</DialogTitle></DialogHeader>
           <div className="space-y-3 py-2">
             <div className="space-y-1"><Label>Ma goc</Label><Input value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} placeholder="THANK10" /></div>
+            <div className="space-y-1">
+              <Label>Kieu phat ma</Label>
+              <Select value={form.promo_type} onValueChange={(value) => setForm({ ...form, promo_type: value })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="AMOUNT">Tich tien du moc</SelectItem>
+                  <SelectItem value="ORDER_COUNT">Tich so don da giao</SelectItem>
+                  <SelectItem value="ORDER_QTY">Mot don mua du so luong</SelectItem>
+                  <SelectItem value="PUBLIC">Ma public co gioi han luot</SelectItem>
+                  <SelectItem value="PRIVATE">Ma rieng cho 1 user</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
               <div className="font-medium text-foreground">Tom tat luat</div>
               <div className="mt-1">{promoRulePreview}</div>
@@ -296,10 +336,38 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                 <p className="text-xs text-muted-foreground">Day la tong tien don hang, khong phai so don.</p>
               </div>
             </div>
+            {form.promo_type === "AMOUNT" && (
+              <div className="space-y-1">
+                <Label>Tich tien du bao nhieu thi tang ma</Label>
+                <Input inputMode="numeric" value={form.threshold_amount} onChange={(event) => setForm({ ...form, threshold_amount: event.target.value })} placeholder="VD: 500k, 500.000" />
+                <p className="text-xs text-muted-foreground">Khach mua nhieu don da giao se duoc cong don tien.</p>
+              </div>
+            )}
+            {form.promo_type === "ORDER_COUNT" && (
+              <div className="space-y-1">
+                <Label>Tang ma sau bao nhieu don da giao</Label>
+                <Input inputMode="numeric" value={form.required_orders} onChange={(event) => setForm({ ...form, required_orders: plainNumber(event.target.value) })} placeholder="VD: 10" />
+                <p className="text-xs text-muted-foreground">Nhap 10 nghia la khach mua du 10 don da giao thi bot moi tang ma.</p>
+              </div>
+            )}
+            {form.promo_type === "ORDER_QTY" && (
+              <div className="space-y-1">
+                <Label>Mot don mua tu bao nhieu san pham thi tang ma</Label>
+                <Input inputMode="numeric" value={form.threshold_qty} onChange={(event) => setForm({ ...form, threshold_qty: plainNumber(event.target.value) })} placeholder="VD: 10" />
+                <p className="text-xs text-muted-foreground">Chi tinh khi cung mot don co so luong dat moc nay.</p>
+              </div>
+            )}
+            {form.promo_type === "PRIVATE" && (
+              <div className="space-y-1">
+                <Label>User ID nhan ma rieng</Label>
+                <Input inputMode="numeric" value={form.target_user_id} onChange={(event) => setForm({ ...form, target_user_id: plainNumber(event.target.value) })} placeholder="VD: 6261937216" />
+                <p className="text-xs text-muted-foreground">Chi user nay moi dung duoc ma con duoc tao.</p>
+              </div>
+            )}
             <div className="space-y-1">
-              <Label>Tang ma sau bao nhieu don da giao</Label>
-              <Input inputMode="numeric" value={form.required_orders} onChange={(event) => setForm({ ...form, required_orders: plainNumber(event.target.value) })} placeholder="0 = ma public, VD: 10" />
-              <p className="text-xs text-muted-foreground">Nhap 10 nghia la khach mua du 10 don da giao thi bot moi tang ma. Nhap 0 thi ma public va co the ap ngay.</p>
+              <Label>So ma toi da duoc phat</Label>
+              <Input inputMode="numeric" value={form.max_claims} onChange={(event) => setForm({ ...form, max_claims: plainNumber(event.target.value) })} placeholder="0 = khong gioi han, VD: 20" />
+              <p className="text-xs text-muted-foreground">Nhap 20 thi chi 20 ma con dau tien duoc tao. Moi khach nhan mot ma rieng.</p>
             </div>
             <div className="space-y-1">
               <Label>Stock Code ap dung khi dung ma</Label>

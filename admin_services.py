@@ -640,10 +640,17 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
     headers = _headers(ws)
     promo_id = str(data.get("id") or "").strip() or f"PROMO{shop.now_dt().strftime('%Y%m%d%H%M%S')}{random.randint(100, 999)}"
     code = str(data.get("code") or "").strip().upper()
+    promo_type = str(data.get("promo_type") or "").strip().upper()
+    if promo_type not in ("AMOUNT", "ORDER_COUNT", "ORDER_QTY", "PUBLIC", "PRIVATE"):
+        promo_type = "ORDER_COUNT" if shop.normalize_int(data.get("required_orders"), 0) > 0 else "PUBLIC"
     discount = max(1, _money_input(data.get("discount_amount") or data.get("discount_percent"), 0))
     min_order_total = max(0, _money_input(data.get("min_order_total"), 0))
     stock_code = str(data.get("stock_code") or "").strip().upper()
+    threshold_amount = max(0, _money_input(data.get("threshold_amount"), 0))
     required = max(0, shop.normalize_int(data.get("required_orders"), 0))
+    threshold_qty = max(0, shop.normalize_int(data.get("threshold_qty"), 0))
+    max_claims = max(0, shop.normalize_int(data.get("max_claims"), 0))
+    target_user_id = str(data.get("target_user_id") or "").strip()
     expires_days = max(1, shop.normalize_int(data.get("expires_days"), 7))
     status = str(data.get("status") or "ACTIVE").strip().upper()
     if status not in ("ACTIVE", "PAUSED"):
@@ -654,10 +661,15 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
     payload = {
         "id": promo_id,
         "code": code,
+        "promo_type": promo_type,
         "discount_amount": discount,
         "min_order_total": min_order_total,
         "stock_code": stock_code,
+        "threshold_amount": threshold_amount,
         "required_orders": required,
+        "threshold_qty": threshold_qty,
+        "max_claims": max_claims,
+        "target_user_id": target_user_id,
         "expires_days": expires_days,
         "status": status,
         "note": str(data.get("note") or ""),
@@ -677,6 +689,11 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
         ws.update(f"A{target_row}:{chr(64 + len(headers))}{target_row}", [row_values], value_input_option="USER_ENTERED")
     else:
         ws.append_row(row_values, value_input_option="USER_ENTERED")
+    if promo_type == "PRIVATE" and target_user_id.isdigit() and status == "ACTIVE":
+        try:
+            shop.grant_promotion_to_user({k: str(v) for k, v in payload.items()}, int(target_user_id))
+        except Exception:
+            pass
     invalidate_snapshot_cache()
     return {"ok": True, "promotion": payload, "items": shop.load_promotions()}
 
