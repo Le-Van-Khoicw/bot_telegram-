@@ -58,6 +58,8 @@ const statusLabel = (status: unknown) => text(status).toUpperCase() === "PAUSED"
 
 const plainNumber = (value: string) => String(value || "").replace(/[^\d]/g, "") || "0";
 
+const shortMoney = (value: string) => money(moneyInputToNumber(value));
+
 export function Promotions({ data, adminKey, refresh }: Props) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ ...EMPTY });
@@ -72,6 +74,12 @@ export function Promotions({ data, adminKey, refresh }: Props) {
   const stockOptions = Array.from(
     new Set((data?.products || []).map((product) => text(product.stock_code)).filter((stock) => stock && !blank(stock)))
   ).sort();
+  const promoRulePreview = [
+    `Giam ${shortMoney(form.discount_amount)}`,
+    `chi ap dung khi tong tien don tu ${shortMoney(form.min_order_total)}`,
+    form.stock_code ? `stock ${form.stock_code}` : "tat ca san pham",
+    Number(form.required_orders || 0) > 0 ? `tu tang ma sau ${form.required_orders} don da giao` : "ma public, ap ngay khi khach mua",
+  ].join(" | ");
 
   const syncSettings = () => {
     setMenuEnabled(String(settings.menu_enabled || "").toUpperCase() === "TRUE");
@@ -195,8 +203,8 @@ export function Promotions({ data, adminKey, refresh }: Props) {
               <TableRow>
                 <TableHead>Ma</TableHead>
                 <TableHead className="text-center">Giam</TableHead>
-                <TableHead className="text-center">Don toi thieu</TableHead>
-                <TableHead className="text-center">Moc tang</TableHead>
+                <TableHead className="text-center">Tien don toi thieu</TableHead>
+                <TableHead className="text-center">Tang sau bao nhieu don</TableHead>
                 <TableHead className="text-center">Stock</TableHead>
                 <TableHead className="text-center">Han dung</TableHead>
                 <TableHead className="text-center">Trang thai</TableHead>
@@ -237,7 +245,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                 <TableHead className="text-center">Lan</TableHead>
                 <TableHead>Ma da tang</TableHead>
                 <TableHead className="text-center">Giam</TableHead>
-                <TableHead className="text-center">Don toi thieu</TableHead>
+                <TableHead className="text-center">Tien don toi thieu</TableHead>
                 <TableHead className="text-center">Stock</TableHead>
                 <TableHead className="text-center">Trang thai</TableHead>
                 <TableHead>Han dung</TableHead>
@@ -271,16 +279,30 @@ export function Promotions({ data, adminKey, refresh }: Props) {
           <DialogHeader><DialogTitle>{form.id ? "Sua ma khuyen mai" : "Them ma khuyen mai"}</DialogTitle></DialogHeader>
           <div className="space-y-3 py-2">
             <div className="space-y-1"><Label>Ma goc</Label><Input value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} placeholder="THANK10" /></div>
+            <div className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+              <div className="font-medium text-foreground">Tom tat luat</div>
+              <div className="mt-1">{promoRulePreview}</div>
+              <div className="mt-2 text-xs">Thong bao trong menu bot chi la noi dung quang cao. Bot tinh giam gia theo cac o ben duoi.</div>
+            </div>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1"><Label>So tien giam</Label><Input inputMode="numeric" value={form.discount_amount} onChange={(event) => setForm({ ...form, discount_amount: event.target.value })} placeholder="VD: 20k, 20.000" /></div>
-              <div className="space-y-1"><Label>Don toi thieu</Label><Input inputMode="numeric" value={form.min_order_total} onChange={(event) => setForm({ ...form, min_order_total: event.target.value })} placeholder="VD: 500k, 500.000" /></div>
+              <div className="space-y-1">
+                <Label>So tien giam (VND)</Label>
+                <Input inputMode="numeric" value={form.discount_amount} onChange={(event) => setForm({ ...form, discount_amount: event.target.value })} placeholder="VD: 20k, 20.000" />
+                <p className="text-xs text-muted-foreground">Nhap so tien se tru vao don.</p>
+              </div>
+              <div className="space-y-1">
+                <Label>Tien don toi thieu (VND)</Label>
+                <Input inputMode="numeric" value={form.min_order_total} onChange={(event) => setForm({ ...form, min_order_total: event.target.value })} placeholder="VD: 500k, 500.000" />
+                <p className="text-xs text-muted-foreground">Day la tong tien don hang, khong phai so don.</p>
+              </div>
             </div>
             <div className="space-y-1">
-              <Label>Moc tang sau X don</Label>
+              <Label>Tang ma sau bao nhieu don da giao</Label>
               <Input inputMode="numeric" value={form.required_orders} onChange={(event) => setForm({ ...form, required_orders: plainNumber(event.target.value) })} placeholder="0 = ma public, VD: 10" />
+              <p className="text-xs text-muted-foreground">Nhap 10 nghia la khach mua du 10 don da giao thi bot moi tang ma. Nhap 0 thi ma public va co the ap ngay.</p>
             </div>
             <div className="space-y-1">
-              <Label>Stock Code ap dung</Label>
+              <Label>Stock Code ap dung khi dung ma</Label>
               <Select value={form.stock_code || "__ALL__"} onValueChange={(value) => setForm({ ...form, stock_code: value === "__ALL__" ? "" : value })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
