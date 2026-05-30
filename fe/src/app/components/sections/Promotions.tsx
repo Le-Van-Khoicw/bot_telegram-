@@ -61,7 +61,7 @@ const moneyInputToNumber = (value: string) => {
 
 const statusLabel = (status: unknown) => text(status).toUpperCase() === "PAUSED" ? "Tắt" : "Bật";
 
-const plainNumber = (value: string) => String(value || "").replace(/[^\d]/g, "") || "0";
+const plainNumber = (value: string) => (String(value || "").replace(/[^\d]/g, "") || "0").replace(/^0+(?=\d)/, "");
 
 const shortMoney = (value: string) => money(moneyInputToNumber(value));
 
@@ -80,15 +80,15 @@ export function Promotions({ data, adminKey, refresh }: Props) {
     new Set((data?.products || []).map((product) => text(product.stock_code)).filter((stock) => stock && !blank(stock)))
   ).sort();
   const promoRulePreview = [
-    `Giam ${shortMoney(form.discount_amount)}`,
-    `chi ap dung khi tong tien don tu ${shortMoney(form.min_order_total)}`,
-    form.stock_code ? `stock ${form.stock_code}` : "tat ca san pham",
-    form.promo_type === "AMOUNT" ? `tu tang ma khi khach tich du ${shortMoney(form.threshold_amount)}` :
-      form.promo_type === "ORDER_QTY" ? `tu tang ma khi 1 don mua tu ${form.threshold_qty || 0} san pham` :
-      form.promo_type === "ORDER_COUNT" ? `tu tang ma sau ${form.required_orders || 0} don da giao` :
-      form.promo_type === "PRIVATE" ? `ma rieng cho user ${form.target_user_id || "chua nhap"}` :
-      "ma public, khach nhap ma goc de nhan ma rieng",
-    Number(form.max_claims || 0) > 0 ? `toi da ${form.max_claims} ma` : "khong gioi han so ma",
+    `Giảm ${shortMoney(form.discount_amount)}`,
+    `chỉ áp dụng khi tổng tiền đơn từ ${shortMoney(form.min_order_total)}`,
+    form.stock_code ? `stock ${form.stock_code}` : "tất cả sản phẩm",
+    form.promo_type === "AMOUNT" ? `tự tặng mã khi khách tích đủ ${shortMoney(form.threshold_amount)}` :
+      form.promo_type === "ORDER_QTY" ? `tự tặng mã khi 1 đơn mua từ ${plainNumber(form.threshold_qty)} sản phẩm` :
+      form.promo_type === "ORDER_COUNT" ? `tự tặng mã sau ${plainNumber(form.required_orders)} đơn đã giao` :
+      form.promo_type === "PRIVATE" ? `mã riêng cho user ${form.target_user_id || "chưa nhập"}` :
+      "mã public, khách nhập mã gốc để nhận mã riêng",
+    Number(form.max_claims || 0) > 0 ? `tối đa ${plainNumber(form.max_claims)} mã` : "không giới hạn số mã",
   ].join(" | ");
 
   const syncSettings = () => {
@@ -140,7 +140,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
           max_claims: plainNumber(form.max_claims),
         }),
       });
-      toast.success("Da luu khuyen mai");
+      toast.success("Đã lưu khuyến mãi");
       setOpen(false);
       await refresh();
     } finally {
@@ -156,7 +156,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
     setDeleting(true);
     try {
       await adminApi(`/admin/api/promotions/${encodeURIComponent(promoId)}`, adminKey, { method: "DELETE" });
-      toast.success("Da xoa ma khuyen mai");
+      toast.success("Đã xóa mã khuyến mãi");
       setOpen(false);
       await refresh();
     } finally {
@@ -175,7 +175,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
         setMenuEnabled(String(result.settings.menu_enabled || "").toUpperCase() === "TRUE");
         setMenuText(String(result.settings.menu_text || ""));
       }
-      toast.success("Da luu thong bao menu");
+      toast.success("Đã lưu thông báo menu");
       await refresh();
     } finally {
       setSaving(false);
@@ -185,19 +185,19 @@ export function Promotions({ data, adminKey, refresh }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2"><Gift size={20} /> Khuyen mai</h2>
-        <Button size="sm" className="gap-1.5" onClick={openAdd}><Plus size={15} /> Them ma</Button>
+        <h2 className="flex items-center gap-2"><Gift size={20} /> Khuyến mãi</h2>
+        <Button size="sm" className="gap-1.5" onClick={openAdd}><Plus size={15} /> Thêm mã</Button>
       </div>
 
       <Card className="shadow-sm">
         <CardContent className="space-y-3 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="font-semibold">Thong bao khuyen mai trong menu bot</h3>
-              <p className="text-xs text-muted-foreground">Noi dung nay se hien trong /shop khi bat.</p>
+              <h3 className="font-semibold">Thông báo khuyến mãi trong menu bot</h3>
+              <p className="text-xs text-muted-foreground">Nội dung này sẽ hiện trong /shop khi bật.</p>
             </div>
             <div className="flex items-center gap-2">
-              <Label htmlFor="promo-menu-enabled">Hien thi</Label>
+              <Label htmlFor="promo-menu-enabled">Hiển thị</Label>
               <Switch id="promo-menu-enabled" checked={menuEnabled} onCheckedChange={setMenuEnabled} />
             </div>
           </div>
@@ -205,11 +205,11 @@ export function Promotions({ data, adminKey, refresh }: Props) {
             className="min-h-24"
             value={menuText}
             onChange={(event) => setMenuText(event.target.value)}
-            placeholder="Vi du: Mua du moc se nhan ma rieng. Khi thanh toan, bam Nhap ma khuyen mai va dan ma cua ban de duoc giam."
+            placeholder="Ví dụ: Mua đủ mốc sẽ nhận mã riêng. Khi thanh toán, bấm Nhập mã khuyến mãi và dán mã của bạn để được giảm."
           />
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={syncSettings}>Hoan tac</Button>
-            <Button onClick={saveSettings} disabled={saving}>Luu thong bao</Button>
+            <Button variant="outline" onClick={syncSettings}>Hoàn tác</Button>
+            <Button onClick={saveSettings} disabled={saving}>Lưu thông báo</Button>
           </div>
         </CardContent>
       </Card>
@@ -219,17 +219,17 @@ export function Promotions({ data, adminKey, refresh }: Props) {
           <Table className="min-w-[920px]">
             <TableHeader>
               <TableRow>
-                <TableHead>Ma</TableHead>
-                <TableHead>Loai</TableHead>
-                <TableHead className="text-center">Giam</TableHead>
-                <TableHead className="text-center">Tien don toi thieu</TableHead>
-                <TableHead className="text-center">Moc nhan ma</TableHead>
-                <TableHead className="text-center">So ma toi da</TableHead>
+                <TableHead>Mã</TableHead>
+                <TableHead>Loại</TableHead>
+                <TableHead className="text-center">Giảm</TableHead>
+                <TableHead className="text-center">Tiền đơn tối thiểu</TableHead>
+                <TableHead className="text-center">Mốc nhận mã</TableHead>
+                <TableHead className="text-center">Số mã tối đa</TableHead>
                 <TableHead className="text-center">Stock</TableHead>
-                <TableHead className="text-center">Han dung</TableHead>
-                <TableHead className="text-center">Trang thai</TableHead>
-                <TableHead>Ghi chu</TableHead>
-                <TableHead className="text-center">Sua</TableHead>
+                <TableHead className="text-center">Hạn dùng</TableHead>
+                <TableHead className="text-center">Trạng thái</TableHead>
+                <TableHead>Ghi chú</TableHead>
+                <TableHead className="text-center">Sửa</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -241,13 +241,13 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   <TableCell className="text-center">{money(promo.min_order_total)}</TableCell>
                   <TableCell className="text-center">
                     {text(promo.promo_type) === "AMOUNT" ? money(promo.threshold_amount) :
-                      text(promo.promo_type) === "ORDER_QTY" ? `${text(promo.threshold_qty)} sp / 1 don` :
+                      text(promo.promo_type) === "ORDER_QTY" ? `${text(promo.threshold_qty)} sp / 1 đơn` :
                       text(promo.promo_type) === "PRIVATE" ? `User ${text(promo.target_user_id)}` :
-                      Number(promo.required_orders || 0) > 0 ? `${text(promo.required_orders)} don` : "Public"}
+                      Number(promo.required_orders || 0) > 0 ? `${text(promo.required_orders)} đơn` : "Public"}
                   </TableCell>
-                  <TableCell className="text-center">{Number(promo.max_claims || 0) > 0 ? text(promo.max_claims) : "Khong gioi han"}</TableCell>
-                  <TableCell className="text-center">{blank(promo.stock_code) ? "Tat ca" : <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.stock_code)}</code>}</TableCell>
-                  <TableCell className="text-center">{text(promo.expires_days)} ngay</TableCell>
+                  <TableCell className="text-center">{Number(promo.max_claims || 0) > 0 ? text(promo.max_claims) : "Không giới hạn"}</TableCell>
+                  <TableCell className="text-center">{blank(promo.stock_code) ? "Tất cả" : <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.stock_code)}</code>}</TableCell>
+                  <TableCell className="text-center">{text(promo.expires_days)} ngày</TableCell>
                   <TableCell className="text-center"><Badge variant={text(promo.status) === "PAUSED" ? "outline" : "default"}>{statusLabel(promo.status)}</Badge></TableCell>
                   <TableCell className="max-w-[260px] truncate text-muted-foreground">{text(promo.note)}</TableCell>
                   <TableCell className="text-center">
@@ -255,7 +255,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   </TableCell>
                 </TableRow>
               ))}
-              {!promotions.length && <TableRow><TableCell colSpan={11} className="py-8 text-center text-muted-foreground">Chua co ma khuyen mai</TableCell></TableRow>}
+              {!promotions.length && <TableRow><TableCell colSpan={11} className="py-8 text-center text-muted-foreground">Chưa có mã khuyến mãi</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>
@@ -268,15 +268,15 @@ export function Promotions({ data, adminKey, refresh }: Props) {
               <TableRow>
                 <TableHead>User ID</TableHead>
                 <TableHead>Username</TableHead>
-                <TableHead>Ho ten</TableHead>
-                <TableHead className="text-center">Lan</TableHead>
-                <TableHead>Ma da tang</TableHead>
-                <TableHead className="text-center">Giam</TableHead>
-                <TableHead className="text-center">Tien don toi thieu</TableHead>
+                <TableHead>Họ tên</TableHead>
+                <TableHead className="text-center">Lần</TableHead>
+                <TableHead>Mã đã tặng</TableHead>
+                <TableHead className="text-center">Giảm</TableHead>
+                <TableHead className="text-center">Tiền đơn tối thiểu</TableHead>
                 <TableHead className="text-center">Stock</TableHead>
-                <TableHead className="text-center">Trang thai</TableHead>
-                <TableHead>Han dung</TableHead>
-                <TableHead>Don da dung</TableHead>
+                <TableHead className="text-center">Trạng thái</TableHead>
+                <TableHead>Hạn dùng</TableHead>
+                <TableHead>Đơn đã dùng</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -289,13 +289,13 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   <TableCell><code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(award.code)}</code></TableCell>
                   <TableCell className="text-center">{money(award.discount_amount || award.discount_percent)}</TableCell>
                   <TableCell className="text-center">{money(award.min_order_total)}</TableCell>
-                  <TableCell className="text-center">{blank(award.stock_code) ? "Tat ca" : <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(award.stock_code)}</code>}</TableCell>
+                  <TableCell className="text-center">{blank(award.stock_code) ? "Tất cả" : <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(award.stock_code)}</code>}</TableCell>
                   <TableCell className="text-center"><Badge variant={text(award.status) === "USED" ? "secondary" : "default"}>{text(award.status)}</Badge></TableCell>
                   <TableCell className="text-xs text-muted-foreground">{text(award.expires_at)}</TableCell>
                   <TableCell className="font-mono text-xs">{text(award.used_order_id)}</TableCell>
                 </TableRow>
               ))}
-              {!awards.length && <TableRow><TableCell colSpan={11} className="py-8 text-center text-muted-foreground">Chua tang ma nao</TableCell></TableRow>}
+              {!awards.length && <TableRow><TableCell colSpan={11} className="py-8 text-center text-muted-foreground">Chưa tặng mã nào</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>
@@ -303,87 +303,87 @@ export function Promotions({ data, adminKey, refresh }: Props) {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>{form.id ? "Sua ma khuyen mai" : "Them ma khuyen mai"}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{form.id ? "Sửa mã khuyến mãi" : "Thêm mã khuyến mãi"}</DialogTitle></DialogHeader>
           <div className="space-y-3 py-2">
-            <div className="space-y-1"><Label>Ma goc</Label><Input value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} placeholder="THANK10" /></div>
+            <div className="space-y-1"><Label>Mã gốc</Label><Input value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} placeholder="THANK10" /></div>
             <div className="space-y-1">
-              <Label>Kieu phat ma</Label>
+              <Label>Kiểu phát mã</Label>
               <Select value={form.promo_type} onValueChange={(value) => setForm({ ...form, promo_type: value })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="AMOUNT">Tich tien du moc</SelectItem>
-                  <SelectItem value="ORDER_COUNT">Tich so don da giao</SelectItem>
-                  <SelectItem value="ORDER_QTY">Mot don mua du so luong</SelectItem>
-                  <SelectItem value="PUBLIC">Ma public co gioi han luot</SelectItem>
-                  <SelectItem value="PRIVATE">Ma rieng cho 1 user</SelectItem>
+                  <SelectItem value="AMOUNT">Tích tiền đủ mốc</SelectItem>
+                  <SelectItem value="ORDER_COUNT">Tích số đơn đã giao</SelectItem>
+                  <SelectItem value="ORDER_QTY">Một đơn mua đủ số lượng</SelectItem>
+                  <SelectItem value="PUBLIC">Mã public có giới hạn lượt</SelectItem>
+                  <SelectItem value="PRIVATE">Mã riêng cho 1 user</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
-              <div className="font-medium text-foreground">Tom tat luat</div>
+              <div className="font-medium text-foreground">Tóm tắt luật</div>
               <div className="mt-1">{promoRulePreview}</div>
-              <div className="mt-2 text-xs">Thong bao trong menu bot chi la noi dung quang cao. Bot tinh giam gia theo cac o ben duoi.</div>
+              <div className="mt-2 text-xs">Thông báo trong menu bot chỉ là nội dung quảng cáo. Bot tính giảm giá theo các ô bên dưới.</div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label>So tien giam (VND)</Label>
+                <Label>Số tiền giảm (VND)</Label>
                 <Input inputMode="numeric" value={form.discount_amount} onChange={(event) => setForm({ ...form, discount_amount: event.target.value })} placeholder="VD: 20k, 20.000" />
-                <p className="text-xs text-muted-foreground">Nhap so tien se tru vao don.</p>
+                <p className="text-xs text-muted-foreground">Nhập số tiền sẽ trừ vào đơn.</p>
               </div>
               <div className="space-y-1">
-                <Label>Tien don toi thieu (VND)</Label>
+                <Label>Tiền đơn tối thiểu (VND)</Label>
                 <Input inputMode="numeric" value={form.min_order_total} onChange={(event) => setForm({ ...form, min_order_total: event.target.value })} placeholder="VD: 500k, 500.000" />
-                <p className="text-xs text-muted-foreground">Day la tong tien don hang, khong phai so don.</p>
+                <p className="text-xs text-muted-foreground">Đây là tổng tiền đơn hàng, không phải số đơn.</p>
               </div>
             </div>
             {form.promo_type === "AMOUNT" && (
               <div className="space-y-1">
-                <Label>Tich tien du bao nhieu thi tang ma</Label>
+                <Label>Tích tiền đủ bao nhiêu thì tặng mã</Label>
                 <Input inputMode="numeric" value={form.threshold_amount} onChange={(event) => setForm({ ...form, threshold_amount: event.target.value })} placeholder="VD: 500k, 500.000" />
-                <p className="text-xs text-muted-foreground">Khach mua nhieu don da giao se duoc cong don tien.</p>
+                <p className="text-xs text-muted-foreground">Khách mua nhiều đơn đã giao sẽ được cộng dồn tiền.</p>
               </div>
             )}
             {form.promo_type === "ORDER_COUNT" && (
               <div className="space-y-1">
-                <Label>Tang ma sau bao nhieu don da giao</Label>
+                <Label>Tặng mã sau bao nhiêu đơn đã giao</Label>
                 <Input inputMode="numeric" value={form.required_orders} onChange={(event) => setForm({ ...form, required_orders: plainNumber(event.target.value) })} placeholder="VD: 10" />
-                <p className="text-xs text-muted-foreground">Nhap 10 nghia la khach mua du 10 don da giao thi bot moi tang ma.</p>
+                <p className="text-xs text-muted-foreground">Nhập 10 nghĩa là khách mua đủ 10 đơn đã giao thì bot mới tặng mã.</p>
               </div>
             )}
             {form.promo_type === "ORDER_QTY" && (
               <div className="space-y-1">
-                <Label>Mot don mua tu bao nhieu san pham thi tang ma</Label>
+                <Label>Một đơn mua từ bao nhiêu sản phẩm thì tặng mã</Label>
                 <Input inputMode="numeric" value={form.threshold_qty} onChange={(event) => setForm({ ...form, threshold_qty: plainNumber(event.target.value) })} placeholder="VD: 10" />
-                <p className="text-xs text-muted-foreground">Chi tinh khi cung mot don co so luong dat moc nay.</p>
+                <p className="text-xs text-muted-foreground">Chỉ tính khi cùng một đơn có số lượng đạt mốc này.</p>
               </div>
             )}
             {form.promo_type === "PRIVATE" && (
               <div className="space-y-1">
-                <Label>User ID nhan ma rieng</Label>
+                <Label>User ID nhận mã riêng</Label>
                 <Input inputMode="numeric" value={form.target_user_id} onChange={(event) => setForm({ ...form, target_user_id: plainNumber(event.target.value) })} placeholder="VD: 6261937216" />
-                <p className="text-xs text-muted-foreground">Chi user nay moi dung duoc ma con duoc tao.</p>
+                <p className="text-xs text-muted-foreground">Chỉ user này mới dùng được mã con được tạo.</p>
               </div>
             )}
             <div className="space-y-1">
-              <Label>So ma toi da duoc phat</Label>
-              <Input inputMode="numeric" value={form.max_claims} onChange={(event) => setForm({ ...form, max_claims: plainNumber(event.target.value) })} placeholder="0 = khong gioi han, VD: 20" />
-              <p className="text-xs text-muted-foreground">Nhap 20 thi chi 20 ma con dau tien duoc tao. Moi khach nhan mot ma rieng.</p>
+              <Label>Số mã tối đa được phát</Label>
+              <Input inputMode="numeric" value={form.max_claims} onChange={(event) => setForm({ ...form, max_claims: plainNumber(event.target.value) })} placeholder="0 = không giới hạn, VD: 20" />
+              <p className="text-xs text-muted-foreground">Nhập 20 thì chỉ 20 mã con đầu tiên được tạo. Mỗi khách nhận một mã riêng.</p>
             </div>
             <div className="space-y-1">
-              <Label>Stock Code ap dung khi dung ma</Label>
+              <Label>Stock Code áp dụng khi dùng mã</Label>
               <Select value={form.stock_code || "__ALL__"} onValueChange={(value) => setForm({ ...form, stock_code: value === "__ALL__" ? "" : value })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__ALL__">Tat ca san pham</SelectItem>
+                  <SelectItem value="__ALL__">Tất cả sản phẩm</SelectItem>
                   {stockOptions.map((stock) => (
                     <SelectItem key={stock} value={stock}>{stock}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1"><Label>Han ngay</Label><Input type="number" min="1" value={form.expires_days} onChange={(event) => setForm({ ...form, expires_days: event.target.value })} /></div>
+            <div className="space-y-1"><Label>Hạn ngày</Label><Input type="number" min="1" value={form.expires_days} onChange={(event) => setForm({ ...form, expires_days: event.target.value })} /></div>
             <div className="space-y-1">
-              <Label>Trang thai</Label>
+              <Label>Trạng thái</Label>
               <Select value={form.status} onValueChange={(value) => setForm({ ...form, status: value })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -392,17 +392,17 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1"><Label>Ghi chu</Label><Input value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></div>
+            <div className="space-y-1"><Label>Ghi chú</Label><Input value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></div>
           </div>
           <DialogFooter>
             {form.id && (
               <Button variant="destructive" className="mr-auto gap-1.5" onClick={deleteCurrent} disabled={saving || deleting}>
                 <Trash2 size={15} />
-                {deleting ? "Dang xoa..." : "Xoa"}
+                {deleting ? "Đang xóa..." : "Xóa"}
               </Button>
             )}
-            <Button variant="outline" onClick={() => setOpen(false)}>Huy</Button>
-            <Button onClick={save} disabled={saving || deleting || !form.code}>{saving ? "Dang luu..." : "Luu"}</Button>
+            <Button variant="outline" onClick={() => setOpen(false)}>Hủy</Button>
+            <Button onClick={save} disabled={saving || deleting || !form.code}>{saving ? "Đang lưu..." : "Lưu"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
