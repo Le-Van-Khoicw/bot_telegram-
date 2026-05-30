@@ -385,7 +385,21 @@ def product_price_note(product: Dict[str, Any]) -> str:
 def is_slot_product(product: Dict[str, Any]) -> bool:
     stock_code = str(product.get("stock_code") or "").strip().upper()
     product_id = str(product.get("product_id") or "").strip().upper()
-    return stock_code.startswith("SLOT") or product_id.startswith("SLOT")
+    name = str(product.get("name") or "").strip().upper()
+    return (
+        stock_code.startswith("SLOT")
+        or product_id.startswith("SLOT")
+        or slot_limit(product) > 0
+        or "SLOT" in name
+    )
+
+
+def slot_order_stock_code(product: Dict[str, Any]) -> str:
+    stock_code = str(product.get("stock_code") or "").strip()
+    if stock_code.upper().startswith("SLOT"):
+        return stock_code
+    product_id = str(product.get("product_id") or product.get("slot_id") or stock_code or "SLOT").strip()
+    return f"SLOT:{product_id}"
 
 
 def slot_limit(product: Dict[str, Any]) -> int:
@@ -396,15 +410,17 @@ def slot_remaining(product: Dict[str, Any], taken_counts: Optional[Dict[str, int
     limit = slot_limit(product)
     if limit <= 0:
         return 999999
-    stock_code = str(product.get("stock_code") or "").strip()
     taken_counts = taken_counts if taken_counts is not None else slot_taken_count_by_code_cached()
-    return max(0, limit - normalize_int(taken_counts.get(stock_code), 0))
+    return max(0, limit - slot_used(product, taken_counts))
 
 
 def slot_used(product: Dict[str, Any], taken_counts: Optional[Dict[str, int]] = None) -> int:
     stock_code = str(product.get("stock_code") or "").strip()
+    order_stock = slot_order_stock_code(product)
     taken_counts = taken_counts if taken_counts is not None else slot_taken_count_by_code_cached()
-    return normalize_int(taken_counts.get(stock_code), 0)
+    if order_stock == stock_code:
+        return normalize_int(taken_counts.get(stock_code), 0)
+    return normalize_int(taken_counts.get(order_stock), 0) + normalize_int(taken_counts.get(stock_code), 0)
 
 
 def slot_taken_count_by_code() -> Dict[str, int]:
@@ -2840,7 +2856,7 @@ async def handle_slot_email_input(update: Update, context: ContextTypes.DEFAULT_
             return True
         slot_id = product_id
         slot_title = str(slot.get("name") or product_id)
-        stock_code = str(slot.get("stock_code") or f"SLOT:{slot_id}")
+        stock_code = slot_order_stock_code(slot)
     else:
         slot_id = str(pending.get("slot_id") or "").strip()
         slot = await gs_call(get_slot, slot_id)
