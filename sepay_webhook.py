@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 
 import gspread
+from gspread.exceptions import APIError
 from google.oauth2.service_account import Credentials
 
 from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
@@ -580,8 +581,29 @@ def delivery_copy_message(order_id: str, stock_code: str, qty: int, delivered_at
 
 
 async def gs_call(fn, *args, **kwargs):
-    async with SHEETS_LOCK:
-        return await asyncio.to_thread(fn, *args, **kwargs)
+    delays = [1, 2, 4, 8, 16, 32, 60]
+    last_exc = None
+    for attempt, delay in enumerate([0] + delays, start=1):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            async with SHEETS_LOCK:
+                return await asyncio.to_thread(fn, *args, **kwargs)
+        except APIError as exc:
+            last_exc = exc
+            msg = str(exc)
+            if "429" not in msg and "quota exceeded" not in msg.lower():
+                raise
+            logger.warning(
+                "Google Sheets quota hit in %s attempt=%s/%s, retry in %ss: %s",
+                getattr(fn, "__name__", "gs_call"),
+                attempt,
+                len(delays) + 1,
+                delay if delay else delays[0],
+                msg,
+            )
+            continue
+    raise last_exc
 
 
 async def edit_text_safe(user_id: int, msg_id: int, text: str, kb: InlineKeyboardMarkup):
@@ -705,6 +727,13 @@ def parse_sepay_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def process_payment(payload: Dict[str, Any]) -> None:
+    try:
+        await _process_payment(payload)
+    except Exception as exc:
+        logger.exception("process_payment failed after retries: %s", exc)
+
+
+async def _process_payment(payload: Dict[str, Any]) -> None:
     info = parse_sepay_payload(payload)
     amount = info["amount"]
     desc = info["description"]

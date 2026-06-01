@@ -3475,8 +3475,8 @@ async def checkout_flow(
         if context.application.job_queue and qr_msg_id:
             context.application.job_queue.run_repeating(
                 countdown_job,
-                interval=60,
-                first=60,
+                interval=120,
+                first=120,
                 data={"order_id": order_id, "user_id": user_id},
                 name=f"countdown_{order_id}",
             )
@@ -4647,8 +4647,8 @@ def configure_application(app: Application) -> Application:
         app.job_queue.run_once(bootstrap_job, when=2, name="bootstrap_restore")
         app.job_queue.run_repeating(
             release_overdue_pending_job,
-            interval=60,
-            first=20,
+            interval=180,
+            first=60,
             name="release_overdue_pending",
         )
 
