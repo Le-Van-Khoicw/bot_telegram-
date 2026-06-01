@@ -16,7 +16,8 @@ import { Button } from "./components/ui/button";
 import { adminApi, money, text, type AdminSnapshot } from "./api";
 import { clearToken, getToken, saveToken } from "./utils/auth";
 
-const POLL_MS = 60_000;
+const POLL_MS = 300_000;
+const SNAPSHOT_PATH = "/admin/api/snapshot?limit=300&pool_limit=5000";
 const DEFAULT_ADMIN_TITLE = "Khoi Van Store Admin";
 
 export default function App() {
@@ -44,6 +45,7 @@ export default function App() {
   const deliveredRef = useRef<Set<string>>(new Set());
   const initializedRef = useRef(false);
   const audioRef = useRef<AudioContext | null>(null);
+  const refreshInFlightRef = useRef(false);
 
   const isAuthenticated = Boolean(adminKey);
   const adminTitleValue = text(data?.brand?.admin_title);
@@ -158,12 +160,14 @@ export default function App() {
 
   const refresh = useCallback(async (key = adminKey, options: { silent?: boolean } = {}) => {
     if (!key) return;
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
     if (!options.silent) {
       setLoading(true);
       setMessage("Đang tải dữ liệu...");
     }
     try {
-      const next = await adminApi<AdminSnapshot>("/admin/api/snapshot?limit=300&pool_limit=20000", key);
+      const next = await adminApi<AdminSnapshot>(SNAPSHOT_PATH, key);
       notifyFromSnapshot(next);
       setData(next);
       setMessage(`Cập nhật lúc ${next.generated_at} (${next.timezone})`);
@@ -180,6 +184,7 @@ export default function App() {
       }
       throw err;
     } finally {
+      refreshInFlightRef.current = false;
       if (!options.silent) setLoading(false);
     }
   }, [adminKey, notifyFromSnapshot]);
@@ -191,6 +196,7 @@ export default function App() {
   useEffect(() => {
     if (!adminKey) return;
     const timer = window.setInterval(() => {
+      if (document.hidden) return;
       refresh(adminKey, { silent: true }).catch(() => undefined);
     }, POLL_MS);
     return () => window.clearInterval(timer);

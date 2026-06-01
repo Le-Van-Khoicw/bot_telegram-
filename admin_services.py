@@ -24,7 +24,7 @@ logger = logging.getLogger("admin_services")
 _firebase_ready = False
 _firestore_client = None
 _SNAPSHOT_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None, "key": ""}
-SNAPSHOT_CACHE_SECONDS = int(os.getenv("ADMIN_SNAPSHOT_CACHE_SECONDS", "45"))
+SNAPSHOT_CACHE_SECONDS = int(os.getenv("ADMIN_SNAPSHOT_CACHE_SECONDS", "300"))
 
 
 def invalidate_snapshot_cache() -> None:
