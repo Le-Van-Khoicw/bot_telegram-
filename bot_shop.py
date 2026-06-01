@@ -272,9 +272,31 @@ async def admin_customer_text(context: ContextTypes.DEFAULT_TYPE, user_id: int) 
     return " | ".join(parts)
 
 async def gs_call(fn, *args, **kwargs):
-    # ✅ serialize gspread calls + chạy trong thread để bot không bị đơ
-    async with SHEETS_LOCK:
-        return await asyncio.to_thread(fn, *args, **kwargs)
+    # Serialize gspread calls and retry quota bursts instead of failing checkout immediately.
+    delays = [1, 2, 4, 8, 16]
+    last_exc = None
+    for attempt, delay in enumerate([0] + delays, start=1):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            async with SHEETS_LOCK:
+                return await asyncio.to_thread(fn, *args, **kwargs)
+        except APIError as exc:
+            last_exc = exc
+            msg = str(exc)
+            if "429" not in msg and "quota exceeded" not in msg.lower():
+                raise
+            next_delay = delays[attempt - 1] if attempt <= len(delays) else 0
+            logger.warning(
+                "Google Sheets quota hit in %s attempt=%s/%s, retry in %ss: %s",
+                getattr(fn, "__name__", "gs_call"),
+                attempt,
+                len(delays) + 1,
+                next_delay,
+                msg,
+            )
+            continue
+    raise last_exc
 
 def now_dt() -> datetime:
     return datetime.now(LOCAL_TZ).replace(tzinfo=None)
@@ -3475,8 +3497,8 @@ async def checkout_flow(
         if context.application.job_queue and qr_msg_id:
             context.application.job_queue.run_repeating(
                 countdown_job,
-                interval=120,
-                first=120,
+                interval=180,
+                first=180,
                 data={"order_id": order_id, "user_id": user_id},
                 name=f"countdown_{order_id}",
             )
@@ -4186,8 +4208,8 @@ async def restore_pending_jobs(app: Application):
         if qr_msg_id_s.isdigit():
             app.job_queue.run_repeating(
                 countdown_job,
-                interval=60,
-                first=60,
+                interval=180,
+                first=180,
                 data={"order_id": order_id, "user_id": user_id},
                 name=f"countdown_{order_id}",
             )
@@ -4647,8 +4669,8 @@ def configure_application(app: Application) -> Application:
         app.job_queue.run_once(bootstrap_job, when=2, name="bootstrap_restore")
         app.job_queue.run_repeating(
             release_overdue_pending_job,
-            interval=180,
-            first=60,
+            interval=600,
+            first=120,
             name="release_overdue_pending",
         )
 
