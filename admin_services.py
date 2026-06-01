@@ -680,11 +680,15 @@ def save_promotion(data: Dict[str, Any]) -> Dict[str, Any]:
     }
     values = ws.get_all_values()
     c_id = headers.get("id")
+    c_code = headers.get("code")
     target_row = 0
     for rownum, row in enumerate(values[1:], start=2):
-        current = row[c_id - 1].strip() if c_id and c_id - 1 < len(row) else ""
-        if current == promo_id:
+        current_id = row[c_id - 1].strip() if c_id and c_id - 1 < len(row) else ""
+        current_code = row[c_code - 1].strip().upper() if c_code and c_code - 1 < len(row) else ""
+        if current_id == promo_id or (current_code and current_code == code):
             target_row = rownum
+            if current_id and not str(data.get("id") or "").strip():
+                payload["id"] = current_id
             break
     row_values = _row_from_headers(headers, payload)
     if target_row:
@@ -704,10 +708,13 @@ def delete_promotion(promo_id: str) -> Dict[str, Any]:
     ws = shop.promotions_ws()
     rows = shop.get_all_records(ws)
     target = str(promo_id or "").strip()
+    target_upper = target.upper()
     if not target:
         raise ValueError("Thieu id khuyen mai")
     for idx, row in enumerate(rows, start=2):
-        if str(row.get("id") or "").strip() == target:
+        row_id = str(row.get("id") or "").strip()
+        row_code = str(row.get("code") or "").strip().upper()
+        if row_id == target or (row_code and row_code == target_upper):
             ws.delete_rows(idx)
             invalidate_snapshot_cache()
             return {"ok": True, "deleted": target, "items": shop.load_promotions()}

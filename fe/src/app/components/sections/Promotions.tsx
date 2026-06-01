@@ -60,7 +60,9 @@ const moneyInputToNumber = (value: string) => {
   return raw.replace(/[^\d]/g, "") || "0";
 };
 
-const statusLabel = (status: unknown) => text(status).toUpperCase() === "PAUSED" ? "Tắt" : "Bật";
+const normalizeStatus = (status: unknown) => text(status).trim().toUpperCase();
+
+const statusLabel = (status: unknown) => normalizeStatus(status) === "PAUSED" ? "Tắt" : "Bật";
 
 const plainNumber = (value: string) => (String(value || "").replace(/[^\d]/g, "") || "0").replace(/^0+(?=\d)/, "");
 
@@ -122,7 +124,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
       target_user_id: blank(promo.target_user_id) ? "" : text(promo.target_user_id),
       count_from_created: blank(promo.count_from_created) || text(promo.count_from_created).toUpperCase() !== "FALSE" ? "TRUE" : "FALSE",
       expires_days: blank(promo.expires_days) ? "7" : text(promo.expires_days),
-      status: text(promo.status) === "PAUSED" ? "PAUSED" : "ACTIVE",
+      status: normalizeStatus(promo.status) === "PAUSED" ? "PAUSED" : "ACTIVE",
       note: blank(promo.note) ? "" : text(promo.note),
     });
     setOpen(true);
@@ -152,7 +154,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
   };
 
   const deleteCurrent = async () => {
-    const promoId = form.id.trim();
+    const promoId = form.id.trim() || form.code.trim();
     if (!promoId) return;
     const ok = window.confirm(`Xóa mã khuyến mãi ${form.code || promoId}?`);
     if (!ok) return;
@@ -251,7 +253,7 @@ export function Promotions({ data, adminKey, refresh }: Props) {
                   <TableCell className="text-center">{Number(promo.max_claims || 0) > 0 ? text(promo.max_claims) : "Không giới hạn"}</TableCell>
                   <TableCell className="text-center">{blank(promo.stock_code) ? "Tất cả" : <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{text(promo.stock_code)}</code>}</TableCell>
                   <TableCell className="text-center">{text(promo.expires_days)} ngày</TableCell>
-                  <TableCell className="text-center"><Badge variant={text(promo.status) === "PAUSED" ? "outline" : "default"}>{statusLabel(promo.status)}</Badge></TableCell>
+                  <TableCell className="text-center"><Badge variant={normalizeStatus(promo.status) === "PAUSED" ? "outline" : "default"}>{statusLabel(promo.status)}</Badge></TableCell>
                   <TableCell className="max-w-[260px] truncate text-muted-foreground">{text(promo.note)}</TableCell>
                   <TableCell className="text-center">
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(promo)}><Pencil size={14} /></Button>
