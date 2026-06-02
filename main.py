@@ -38,6 +38,14 @@ def telegram_webhook_path() -> str:
     return "/webhook/telegram"
 
 
+def request_base_url(request: Request) -> str:
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    if not host:
+        return ""
+    return f"{proto}://{host}".rstrip("/")
+
+
 async def handle_sepay_webhook(request: Request):
     if not verify_sepay_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -140,9 +148,11 @@ async def admin_telegram_webhook_info(request: Request):
         raise HTTPException(status_code=503, detail="Telegram app is not ready")
     info = await telegram_app.bot.get_webhook_info()
     configured_url = f"{public_base_url()}{telegram_webhook_path()}" if public_base_url() else ""
+    request_url = f"{request_base_url(request)}{telegram_webhook_path()}" if request_base_url(request) else ""
     return {
         "ok": True,
         "configured_url": configured_url,
+        "request_url": request_url,
         "telegram_url": info.url,
         "pending_update_count": info.pending_update_count,
         "last_error_date": info.last_error_date,
@@ -159,7 +169,7 @@ async def admin_reset_telegram_webhook(request: Request):
     require_admin(request)
     if telegram_app is None:
         raise HTTPException(status_code=503, detail="Telegram app is not ready")
-    base_url = public_base_url()
+    base_url = request_base_url(request) or public_base_url()
     if not base_url:
         raise HTTPException(status_code=500, detail="Missing public webhook URL")
     webhook_url = f"{base_url}{telegram_webhook_path()}"
