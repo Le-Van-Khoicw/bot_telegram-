@@ -113,7 +113,7 @@ async def set_webhook_with_retry(webhook_url: str, attempts: int = 12) -> None:
         return
     for attempt in range(1, attempts + 1):
         try:
-            await telegram_app.bot.set_webhook(webhook_url, drop_pending_updates=True)
+            await telegram_app.bot.set_webhook(webhook_url, drop_pending_updates=False)
             logger.info("Telegram webhook is active: %s", webhook_url)
             return
         except asyncio.CancelledError:
@@ -129,6 +129,51 @@ async def set_webhook_with_retry(webhook_url: str, attempts: int = 12) -> None:
             )
             await asyncio.sleep(wait_seconds)
     logger.error("Telegram set_webhook failed after %s attempts; app stays online for Render health checks.", attempts)
+
+
+@app.get("/admin/api/telegram-webhook")
+async def admin_telegram_webhook_info(request: Request):
+    from admin_dashboard import require_admin
+
+    require_admin(request)
+    if telegram_app is None:
+        raise HTTPException(status_code=503, detail="Telegram app is not ready")
+    info = await telegram_app.bot.get_webhook_info()
+    configured_url = f"{public_base_url()}{telegram_webhook_path()}" if public_base_url() else ""
+    return {
+        "ok": True,
+        "configured_url": configured_url,
+        "telegram_url": info.url,
+        "pending_update_count": info.pending_update_count,
+        "last_error_date": info.last_error_date,
+        "last_error_message": info.last_error_message,
+        "max_connections": info.max_connections,
+        "allowed_updates": info.allowed_updates,
+    }
+
+
+@app.post("/admin/api/telegram-webhook/reset")
+async def admin_reset_telegram_webhook(request: Request):
+    from admin_dashboard import require_admin
+
+    require_admin(request)
+    if telegram_app is None:
+        raise HTTPException(status_code=503, detail="Telegram app is not ready")
+    base_url = public_base_url()
+    if not base_url:
+        raise HTTPException(status_code=500, detail="Missing public webhook URL")
+    webhook_url = f"{base_url}{telegram_webhook_path()}"
+    await telegram_app.bot.set_webhook(webhook_url, drop_pending_updates=False)
+    info = await telegram_app.bot.get_webhook_info()
+    logger.info("Telegram webhook reset by admin: %s", webhook_url)
+    return {
+        "ok": True,
+        "configured_url": webhook_url,
+        "telegram_url": info.url,
+        "pending_update_count": info.pending_update_count,
+        "last_error_date": info.last_error_date,
+        "last_error_message": info.last_error_message,
+    }
 
 
 @app.on_event("startup")
