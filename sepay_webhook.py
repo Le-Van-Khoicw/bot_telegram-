@@ -325,13 +325,18 @@ def extract_order_id(text: str) -> Optional[str]:
         return None
     text_u = (text or "").upper()
 
-    # dùng regex từ ENV nếu có
+    # First try the configured regex on the raw bank content.
     m = re.search(ORDER_ID_REGEX, text_u)
-    if not m:
-        return None
+    if m:
+        return norm_oid(m.group(0))
 
-    # norm_oid sẽ tự bỏ '-' và ký tự lạ => ra chuẩn không dấu
-    return norm_oid(m.group(0))
+    # Some banks split transfer notes, e.g. "ORD20260602 164713MYD2".
+    # Normalize all non-alphanumerics away, then look for the canonical id.
+    compact = norm_oid(text_u)
+    fallback = re.search(r"ORD\d{14}[A-Z0-9]{4}", compact)
+    if fallback:
+        return fallback.group(0)
+    return None
 
 
 def get_order_by_id(order_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[int], str]:
