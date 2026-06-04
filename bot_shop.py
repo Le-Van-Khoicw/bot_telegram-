@@ -53,6 +53,7 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger("khoivan_store_bot")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ================== CONFIG ==================
 SHOP_NAME = os.getenv("SHOP_NAME", "Khoi Van Store").strip()
@@ -97,6 +98,7 @@ def env_bool(name: str, default: str = "0") -> bool:
 SHOW_USER_PROMO_IN_MENU = env_bool("SHOW_USER_PROMO_IN_MENU", "0")
 SHOW_PRODUCT_PROMO_NOTICE = env_bool("SHOW_PRODUCT_PROMO_NOTICE", "0")
 AWARD_PROMO_BEFORE_CHECKOUT = env_bool("AWARD_PROMO_BEFORE_CHECKOUT", "0")
+SCAN_PENDING_ORDERS_JOB = env_bool("SCAN_PENDING_ORDERS_JOB", "0")
 
 # BIDV
 PAYMENT_INFO = {
@@ -4077,6 +4079,9 @@ async def release_overdue_pending_job(context: ContextTypes.DEFAULT_TYPE):
             logger.info("✅ Auto released expired HELD items from pool=%s", orphan_released)
     except Exception as e:
         logger.error("release_expired_held_items_from_pool failed: %s", e)
+
+    if not SCAN_PENDING_ORDERS_JOB:
+        return
 
     try:
         pending = await gs_call(list_pending_orders)

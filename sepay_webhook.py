@@ -28,6 +28,7 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger("sepay_webhook")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # =========================
 # ENV
