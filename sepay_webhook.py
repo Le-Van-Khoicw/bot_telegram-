@@ -538,6 +538,33 @@ def append_fulfillment_rows(order_id: str, items: List[Dict[str, str]], delivere
         put(row, "delivered_at", delivered_at)
         ws_ful.append_row(row, value_input_option="USER_ENTERED")
 
+
+def get_fulfillment_items(order_id: str) -> List[Dict[str, str]]:
+    if not ws_ful:
+        return []
+    vals = ws_ful.get_all_values()
+    if len(vals) < 2:
+        return []
+    h = normalize_headers(vals[0])
+    c_oid = h.get("order_id")
+    if c_oid is None:
+        return []
+
+    def get(row: List[str], key: str) -> str:
+        c = h.get(key.lower())
+        return row[c].strip() if c is not None and c < len(row) else ""
+
+    items: List[Dict[str, str]] = []
+    for row in vals[1:]:
+        if norm_oid(get(row, "order_id")) != norm_oid(order_id):
+            continue
+        items.append({
+            "item_id": get(row, "item_id"),
+            "stock_code": get(row, "stock_code"),
+            "secret": get(row, "secret"),
+        })
+    return items
+
 # Link hỗ trợ (nên lấy từ ENV cho tiện)
 SUPPORT_TELE_LINK = os.getenv("SUPPORT_TELE_LINK", "https://t.me/khoivancw").strip()
 SUPPORT_ZALO_LINK = os.getenv("SUPPORT_ZALO_LINK", "https://zalo.me/0329279225").strip()
@@ -787,17 +814,23 @@ async def _process_payment(payload: Dict[str, Any]) -> None:
     if status == "PENDING" and created_at and is_expired(created_at):
         logger.warning("PAYMENT_AFTER_TTL | order=%s created_at=%s ttl=%ss", canonical_oid, created_at, ORDER_TTL_SECONDS)
 
-    # ✅ FIX: chặn webhook retry / duplicate
+    # ✅ FIX: chặn webhook retry / duplicate, nhưng cho phép retry giao hàng nếu đơn vẫn PAID.
     existing_tx = (order.get("tx_id") or "").strip()
+    skip_mark_paid = False
     if existing_tx:
         if norm_oid(existing_tx) == norm_oid(txn_id):
-            logger.info("Skip retry: same tx_id=%s | order=%s", existing_tx, canonical_oid)
+            if status == "PAID":
+                logger.info("Retry delivery for PAID order with same tx_id=%s | order=%s", existing_tx, canonical_oid)
+                skip_mark_paid = True
+            else:
+                logger.info("Skip retry: same tx_id=%s | order=%s", existing_tx, canonical_oid)
+                return
+        else:
+            logger.warning(
+                "Order already has tx_id=%s but got new txn_id=%s | order=%s",
+                existing_tx, txn_id, canonical_oid
+            )
             return
-        logger.warning(
-            "Order already has tx_id=%s but got new txn_id=%s | order=%s",
-            existing_tx, txn_id, canonical_oid
-        )
-        return
 
 
     user_id_s = (order.get("user_id") or "").strip()
@@ -845,19 +878,20 @@ async def _process_payment(payload: Dict[str, Any]) -> None:
 
     # 2) mark PAID (chỉ update rownum)
     paid_at = now_str()
-    logger.info("MARKING_PAID | order=%s | amount=%s | rownum=%s", canonical_oid, amount, rownum)
-    await gs_call(update_order_cells, rownum, {"status": "PAID", "paid_at": paid_at, "tx_id": txn_id})
-    # ✅ Background notification - không đợi
-    asyncio.create_task(notify_admins(
-        "💰 Đã nhận thanh toán\n"
-        f"Order: {canonical_oid}\n"
-        f"Khách: {user_id}\n"
-        f"Stock: {stock_code}\n"
-        f"SL: {qty}\n"
-        f"Số tiền: {money_vnd(amount)}\n"
-        f"TX: {txn_id}\n"
-        "Đang giao hàng tự động..."
-    ))
+    if not skip_mark_paid:
+        logger.info("MARKING_PAID | order=%s | amount=%s | rownum=%s", canonical_oid, amount, rownum)
+        await gs_call(update_order_cells, rownum, {"status": "PAID", "paid_at": paid_at, "tx_id": txn_id})
+        # ✅ Background notification - không đợi
+        asyncio.create_task(notify_admins(
+            "💰 Đã nhận thanh toán\n"
+            f"Order: {canonical_oid}\n"
+            f"Khách: {user_id}\n"
+            f"Stock: {stock_code}\n"
+            f"SL: {qty}\n"
+            f"Số tiền: {money_vnd(amount)}\n"
+            f"TX: {txn_id}\n"
+            "Đang giao hàng tự động..."
+        ))
 
     if stock_code.upper().startswith("SLOT"):
         delivered_at = now_str()
@@ -868,11 +902,7 @@ async def _process_payment(payload: Dict[str, Any]) -> None:
             participant = None
         slot_id = stock_code.split(":", 1)[1] if ":" in stock_code else stock_code
         email = (participant or {}).get("email") or (order.get("deliver_text") or "").replace("slot_email=", "")
-        await gs_call(update_order_cells, rownum, {
-            "status": "DELIVERED",
-            "delivered_at": delivered_at,
-            "deliver_text": order.get("deliver_text") or f"slot_email={email}",
-        })
+        slot_sent_ok = False
         if tg_bot:
             try:
                 await tg_bot.send_message(
@@ -887,8 +917,30 @@ async def _process_payment(payload: Dict[str, Any]) -> None:
                     reply_markup=kb_after_delivery(),
                     disable_web_page_preview=True,
                 )
+                slot_sent_ok = True
             except Exception as exc:
                 logger.warning("send slot paid message failed order=%s: %s", canonical_oid, exc)
+        if not slot_sent_ok:
+            await gs_call(update_order_cells, rownum, {
+                "status": "PAID",
+                "delivered_at": "",
+                "deliver_text": order.get("deliver_text") or f"slot_email={email}",
+            })
+            asyncio.create_task(notify_admins(
+                "⚠️ Slot đã thanh toán nhưng gửi tin cho khách thất bại\n"
+                f"Order: {canonical_oid}\n"
+                f"Khách: {user_id}\n"
+                f"Slot: {slot_id}\n"
+                f"Email: {email}\n"
+                f"Số tiền: {money_vnd(amount)}\n"
+                "Trạng thái giữ PAID để admin kiểm tra."
+            ))
+            return
+        await gs_call(update_order_cells, rownum, {
+            "status": "DELIVERED",
+            "delivered_at": delivered_at,
+            "deliver_text": order.get("deliver_text") or f"slot_email={email}",
+        })
         asyncio.create_task(notify_admins(
             "🎟 Slot đã thanh toán\n"
             f"Order: {canonical_oid}\n"
@@ -900,9 +952,13 @@ async def _process_payment(payload: Dict[str, Any]) -> None:
         ))
         return
 
-    # 3) take HELD -> SOLD and get secrets
-    #    (Fix2: dùng canonical_oid; Fix1: pool function sẽ so bằng norm_oid)
+    # 3) take HELD -> SOLD and get secrets.
+    #    If this is a webhook retry after a previous send failure, reuse fulfillment rows.
     items = await gs_call(pool_take_held_and_mark_sold, canonical_oid)
+    reused_fulfillment = False
+    if not items:
+        items = await gs_call(get_fulfillment_items, canonical_oid)
+        reused_fulfillment = bool(items)
 
     secrets = [
         (it.get("secret") or "").strip()
@@ -936,16 +992,15 @@ async def _process_payment(payload: Dict[str, Any]) -> None:
     delivered_at = now_str()
     deliver_text_plain = "\n".join([f"{i}) {s}" for i, s in enumerate(secrets, start=1)])
 
-    # 4) update DELIVERED (chỉ update rownum)
-
-    await gs_call(update_order_cells, rownum, {"status": "DELIVERED", "delivered_at": delivered_at, "deliver_text": deliver_text_plain})
-
+    # 4) Save the delivery text first, but only mark DELIVERED after Telegram send succeeds.
+    await gs_call(update_order_cells, rownum, {"status": "PAID", "deliver_text": deliver_text_plain, "delivered_at": ""})
 
     # 5) write fulfillments (optional) - dùng canonical_oid
-    try:
-        await gs_call(append_fulfillment_rows, canonical_oid, items, delivered_at)
-    except Exception:
-        pass
+    if not reused_fulfillment:
+        try:
+            await gs_call(append_fulfillment_rows, canonical_oid, items, delivered_at)
+        except Exception:
+            pass
 
     # 6) send delivery message (gửi file)
     sent_ok = False
@@ -954,6 +1009,26 @@ async def _process_payment(payload: Dict[str, Any]) -> None:
     except Exception as e:
         logger.exception("send_delivery_message crashed: %s", e)
         sent_ok = False
+
+    if not sent_ok:
+        logger.warning("DELIVERY_SEND_FAILED | order=%s user=%s qty=%s", canonical_oid, user_id, qty)
+        await gs_call(
+            update_order_cells,
+            rownum,
+            {"status": "PAID", "deliver_text": deliver_text_plain, "delivered_at": ""},
+        )
+        asyncio.create_task(notify_admins(
+            "⚠️ Đơn đã thanh toán nhưng gửi hàng cho khách thất bại\n"
+            f"Order: {canonical_oid}\n"
+            f"Khách: {user_id}\n"
+            f"Stock: {stock_code}\n"
+            f"SL: {qty}\n"
+            f"Số tiền: {money_vnd(amount)}\n"
+            "Trạng thái giữ PAID để admin kiểm tra/gửi lại."
+        ))
+        return
+
+    await gs_call(update_order_cells, rownum, {"status": "DELIVERED", "delivered_at": delivered_at, "deliver_text": deliver_text_plain})
 
     async def promo_after_delivery() -> None:
         try:
