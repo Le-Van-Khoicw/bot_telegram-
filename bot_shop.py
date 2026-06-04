@@ -89,6 +89,15 @@ ORDER_TTL_SECONDS = min(int(os.getenv("ORDER_TTL_SECONDS", "300")), 300)  # tố
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
 LOCAL_TZ = ZoneInfo(APP_TIMEZONE)
 
+def env_bool(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
+# Fast defaults: avoid heavy per-user promo scans on menu/detail/checkout.
+SHOW_USER_PROMO_IN_MENU = env_bool("SHOW_USER_PROMO_IN_MENU", "0")
+SHOW_PRODUCT_PROMO_NOTICE = env_bool("SHOW_PRODUCT_PROMO_NOTICE", "0")
+AWARD_PROMO_BEFORE_CHECKOUT = env_bool("AWARD_PROMO_BEFORE_CHECKOUT", "0")
+
 # BIDV
 PAYMENT_INFO = {
     "bank_code": os.getenv("BANK_CODE", "BIDV").strip(),
@@ -176,7 +185,7 @@ def invalidate_stock_cache():
     _CACHE["stock"]["ts"] = 0.0
     _CACHE["stock_prices"]["ts"] = 0.0
 
-def load_products_cached(ttl: int = 90) -> List[Dict[str, Any]]:
+def load_products_cached(ttl: int = 300) -> List[Dict[str, Any]]:
     if _ts() - _CACHE["products"]["ts"] < ttl and _CACHE["products"]["data"]:
         return _CACHE["products"]["data"]
     try:
@@ -193,7 +202,7 @@ def normalize_order_ref(s: str) -> str:
     # giữ chữ/số, bỏ hết ký tự lạ như '-', ' ', '.', ...
     return re.sub(r"[^A-Za-z0-9]", "", (s or "")).upper()
 
-def stock_count_ready_by_code_cached(ttl: int = 30) -> Dict[str, int]:
+def stock_count_ready_by_code_cached(ttl: int = 120) -> Dict[str, int]:
     if _ts() - _CACHE["stock"]["ts"] < ttl and _CACHE["stock"]["data"]:
         return _CACHE["stock"]["data"]
     try:
@@ -206,7 +215,7 @@ def stock_count_ready_by_code_cached(ttl: int = 30) -> Dict[str, int]:
             return _CACHE["stock"]["data"]
         raise
 
-def stock_price_preview_for_products_cached(products: List[Dict[str, Any]], ttl: int = 45) -> Dict[str, Dict[str, Any]]:
+def stock_price_preview_for_products_cached(products: List[Dict[str, Any]], ttl: int = 180) -> Dict[str, Dict[str, Any]]:
     key = "|".join(
         f"{p.get('product_id')}:{p.get('stock_code')}:{p.get('base_price') or p.get('price')}:{p.get('duration_days')}:{p.get('expires_at')}:{p.get('pricing_enabled')}"
         for p in products
@@ -2737,7 +2746,8 @@ async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     promo_award = None
     try:
         promo_text = await gs_call(menu_promo_text)
-        promo_award = await gs_call(best_available_promo_award, chat_id)
+        if SHOW_USER_PROMO_IN_MENU:
+            promo_award = await gs_call(best_available_promo_award, chat_id)
     except Exception as exc:
         logger.warning("promo menu skipped user=%s: %s", chat_id, exc)
 
@@ -2794,12 +2804,12 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
             {p["stock_code"]: bool(p.get("pricing_enabled", True))},
         )
         p = {**p, **stock_prices.get(p["stock_code"], {})}
-    try:
-        await gs_call(award_promotions_for_user, q.from_user.id)
-        promo_notice = await gs_call(product_promo_notice, q.from_user.id, p["stock_code"], normalize_int(p.get("price"), 0))
-        p = {**p, "promo_notice": promo_notice}
-    except Exception as exc:
-        logger.warning("product promo notice skipped user=%s stock=%s: %s", q.from_user.id, p.get("stock_code"), exc)
+    if SHOW_PRODUCT_PROMO_NOTICE:
+        try:
+            promo_notice = await gs_call(product_promo_notice, q.from_user.id, p["stock_code"], normalize_int(p.get("price"), 0))
+            p = {**p, "promo_notice": promo_notice}
+        except Exception as exc:
+            logger.warning("product promo notice skipped user=%s stock=%s: %s", q.from_user.id, p.get("stock_code"), exc)
     await q.edit_message_text(
         product_detail_text(p, ready),
         parse_mode="Markdown",
@@ -3346,10 +3356,11 @@ async def checkout_flow(
         return False
 
     subtotal = sum(normalize_int(item.get("price"), int(product["price"])) for item in reserved_items)
-    try:
-        await gs_call(award_promotions_for_user, user_id)
-    except Exception as exc:
-        logger.warning("promo lookup failed user=%s: %s", user_id, exc)
+    if AWARD_PROMO_BEFORE_CHECKOUT:
+        try:
+            await gs_call(award_promotions_for_user, user_id)
+        except Exception as exc:
+            logger.warning("promo lookup failed user=%s: %s", user_id, exc)
     promo_code = ""
     promo_discount = 0
     total = max(0, subtotal - promo_discount)

@@ -83,8 +83,13 @@ ORDER_TTL_SECONDS = min(int(os.getenv("ORDER_TTL_SECONDS", "300")), 300)  # tố
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
 LOCAL_TZ = ZoneInfo(APP_TIMEZONE)
 
+def env_bool(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
 # If true: only mark PAID/DELIVERED when transferAmount == order.total
 CHECK_AMOUNT = os.getenv("CHECK_AMOUNT", "1").strip() not in ("0", "false", "False")
+UPDATE_RESERVATIONS_ON_DELIVERY = env_bool("UPDATE_RESERVATIONS_ON_DELIVERY", "0")
 
 # Extract order id from description/content
 ORDER_ID_REGEX = os.getenv(
@@ -109,6 +114,7 @@ ws_orders = None
 ws_pool = None
 ws_res = None
 ws_ful = None
+_HEADERS_CACHE: Dict[str, Dict[str, int]] = {}
 
 def release_hold_by_order(order_id: str, mark_status: str = "EXPIRED") -> int:
     """
@@ -309,6 +315,15 @@ def normalize_headers(headers: List[str]) -> Dict[str, int]:
     return {str(h).strip().lower(): i for i, h in enumerate(headers)}
 
 
+def headers_for(ws, cache_key: str) -> Dict[str, int]:
+    cached = _HEADERS_CACHE.get(cache_key)
+    if cached:
+        return cached
+    headers = normalize_headers(ws.row_values(1))
+    _HEADERS_CACHE[cache_key] = headers
+    return headers
+
+
 def safe_int(v: Any, default: int = 0) -> int:
     try:
         s = str(v).strip().replace(".", "").replace(",", "")
@@ -382,8 +397,7 @@ def get_order_by_id(order_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[i
 
 def update_order_cells(rownum: int, updates: Dict[str, Any]) -> None:
     init_gsheet()
-    values = ws_orders.get_all_values()
-    headers = normalize_headers(values[0])
+    headers = headers_for(ws_orders, "orders")
 
     cells: List[Cell] = []
     for k, v in updates.items():
@@ -487,28 +501,28 @@ def pool_take_held_and_mark_sold(order_id: str) -> List[Dict[str, str]]:
     if cells:
         ws_pool.update_cells(cells, value_input_option="USER_ENTERED")
 
-    # update RESERVATIONS.sold_at (giữ nguyên logic cũ của bạn)
-    try:
-        res_vals = ws_res.get_all_values()
-        if len(res_vals) >= 2:
-            rh = normalize_headers(res_vals[0])
-            c_oid = rh.get("order_id")
-            c_sold = rh.get("sold_at")
+    if UPDATE_RESERVATIONS_ON_DELIVERY:
+        try:
+            res_vals = ws_res.get_all_values()
+            if len(res_vals) >= 2:
+                rh = normalize_headers(res_vals[0])
+                c_oid = rh.get("order_id")
+                c_sold = rh.get("sold_at")
 
-            if c_oid is not None and c_sold is not None:
-                res_cells: List[Cell] = []
+                if c_oid is not None and c_sold is not None:
+                    res_cells: List[Cell] = []
 
-                for i in range(1, len(res_vals)):
-                    rownum = i + 1
-                    row = res_vals[i]
-                    oid = (row[c_oid] or "").strip() if c_oid < len(row) else ""
-                    if norm_oid(oid) == norm_oid(order_id):
-                        res_cells.append(Cell(rownum, c_sold + 1, sold_time))
+                    for i in range(1, len(res_vals)):
+                        rownum = i + 1
+                        row = res_vals[i]
+                        oid = (row[c_oid] or "").strip() if c_oid < len(row) else ""
+                        if norm_oid(oid) == norm_oid(order_id):
+                            res_cells.append(Cell(rownum, c_sold + 1, sold_time))
 
-                if res_cells:
-                    ws_res.update_cells(res_cells, value_input_option="USER_ENTERED")
-    except Exception:
-        pass
+                    if res_cells:
+                        ws_res.update_cells(res_cells, value_input_option="USER_ENTERED")
+        except Exception:
+            pass
 
     return items
 
@@ -516,10 +530,9 @@ def pool_take_held_and_mark_sold(order_id: str) -> List[Dict[str, str]]:
 def append_fulfillment_rows(order_id: str, items: List[Dict[str, str]], delivered_at: str) -> None:
     if not ws_ful:
         return
-    vals = ws_ful.get_all_values()
-    if not vals:
+    h = headers_for(ws_ful, "fulfillments")
+    if not h:
         return
-    h = normalize_headers(vals[0])
 
     def make_row():
         return [""] * len(h)
@@ -529,6 +542,7 @@ def append_fulfillment_rows(order_id: str, items: List[Dict[str, str]], delivere
         if c is not None:
             row[c] = "" if val is None else str(val)
 
+    rows: List[List[str]] = []
     for it in items:
         row = make_row()
         put(row, "order_id", order_id)
@@ -536,7 +550,9 @@ def append_fulfillment_rows(order_id: str, items: List[Dict[str, str]], delivere
         put(row, "stock_code", it.get("stock_code", ""))
         put(row, "secret", it.get("secret", ""))
         put(row, "delivered_at", delivered_at)
-        ws_ful.append_row(row, value_input_option="USER_ENTERED")
+        rows.append(row)
+    if rows:
+        ws_ful.append_rows(rows, value_input_option="USER_ENTERED")
 
 
 def get_fulfillment_items(order_id: str) -> List[Dict[str, str]]:
@@ -992,17 +1008,14 @@ async def _process_payment(payload: Dict[str, Any]) -> None:
     delivered_at = now_str()
     deliver_text_plain = "\n".join([f"{i}) {s}" for i, s in enumerate(secrets, start=1)])
 
-    # 4) Save the delivery text first, but only mark DELIVERED after Telegram send succeeds.
-    await gs_call(update_order_cells, rownum, {"status": "PAID", "deliver_text": deliver_text_plain, "delivered_at": ""})
-
-    # 5) write fulfillments (optional) - dùng canonical_oid
+    # 4) write fulfillments (optional) - dùng canonical_oid
     if not reused_fulfillment:
         try:
             await gs_call(append_fulfillment_rows, canonical_oid, items, delivered_at)
         except Exception:
             pass
 
-    # 6) send delivery message (gửi file)
+    # 5) send delivery message (gửi file)
     sent_ok = False
     try:
         sent_ok = await send_delivery_message(user_id, canonical_oid, stock_code, qty, secrets)
