@@ -584,14 +584,11 @@ def get_fulfillment_items(order_id: str) -> List[Dict[str, str]]:
 
 # Link hỗ trợ (nên lấy từ ENV cho tiện)
 SUPPORT_TELE_LINK = os.getenv("SUPPORT_TELE_LINK", "https://t.me/khoivancw").strip()
-SUPPORT_ZALO_LINK = os.getenv("SUPPORT_ZALO_LINK", "https://zalo.me/0329279225").strip()
 
 def kb_support_only() -> InlineKeyboardMarkup:
     row: List[InlineKeyboardButton] = []
     if SUPPORT_TELE_LINK:
         row.append(InlineKeyboardButton("💬 Hỗ trợ", url=SUPPORT_TELE_LINK))
-    if SUPPORT_ZALO_LINK:
-        row.append(InlineKeyboardButton("📱 Zalo", url=SUPPORT_ZALO_LINK))
     if not row:
         row.append(InlineKeyboardButton("⬅️ Menu", callback_data="back_main"))
     return InlineKeyboardMarkup([row])

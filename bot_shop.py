@@ -47,6 +47,7 @@ from telegram.helpers import escape_markdown
 from mail_reader import MailReaderError, read_inbox_messages
 SHEETS_LOCK = asyncio.Lock()
 HANGVE_LOCK = asyncio.Lock()
+STOCK_NOTIFY_LOCK = asyncio.Lock()
 # ================== LOGGING ==================
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -99,6 +100,12 @@ SHOW_USER_PROMO_IN_MENU = env_bool("SHOW_USER_PROMO_IN_MENU", "0")
 SHOW_PRODUCT_PROMO_NOTICE = env_bool("SHOW_PRODUCT_PROMO_NOTICE", "0")
 AWARD_PROMO_BEFORE_CHECKOUT = env_bool("AWARD_PROMO_BEFORE_CHECKOUT", "0")
 SCAN_PENDING_ORDERS_JOB = env_bool("SCAN_PENDING_ORDERS_JOB", "0")
+AUTO_STOCK_NOTIFY = env_bool("AUTO_STOCK_NOTIFY", "1")
+AUTO_STOCK_NOTIFY_INTERVAL_SECONDS = max(int(os.getenv("AUTO_STOCK_NOTIFY_INTERVAL_SECONDS", "120")), 30)
+PRODUCT_CACHE_TTL_SECONDS = max(int(os.getenv("PRODUCT_CACHE_TTL_SECONDS", "60")), 0)
+STOCK_CACHE_TTL_SECONDS = max(int(os.getenv("STOCK_CACHE_TTL_SECONDS", "30")), 0)
+STOCK_TEXT_CACHE_TTL_SECONDS = max(int(os.getenv("STOCK_TEXT_CACHE_TTL_SECONDS", "15")), 0)
+USER_FORCE_REFRESH_STOCK = env_bool("USER_FORCE_REFRESH_STOCK", "0")
 
 # BIDV
 PAYMENT_INFO = {
@@ -110,8 +117,6 @@ PAYMENT_INFO = {
 }
 # Support
 SUPPORT_ADMIN_NAME = os.getenv("SUPPORT_ADMIN_NAME", "Le Van Khoi").strip()
-SUPPORT_ZALO = os.getenv("SUPPORT_ZALO", "0329279225").strip()
-SUPPORT_ZALO_LINK = os.getenv("SUPPORT_ZALO_LINK", "https://zalo.me/0329279225").strip()
 SUPPORT_TELE = os.getenv("SUPPORT_TELE", "@khoivancw").strip()
 SUPPORT_TELE_LINK = os.getenv("SUPPORT_TELE_LINK", "https://t.me/khoivancw").strip()
 
@@ -134,6 +139,7 @@ PENDING_SLOT_EMAIL: Dict[int, Dict[str, str]] = {}  # user_id -> {"slot_id": ...
 SELECTED_QTY_CACHE: Dict[str, Dict[str, Any]] = {}
 SESSION_EXPIRY_SECONDS = 600  # 10 minutes
 CHECKOUT_IN_PROGRESS: set[int] = set()
+LAST_READY_STOCK: Optional[Dict[str, int]] = None
 PROMOTION_HEADERS = [
     "id", "code", "promo_type", "discount_amount", "min_order_total", "stock_code",
     "threshold_amount", "required_orders", "threshold_qty", "max_claims", "target_user_id",
@@ -175,6 +181,7 @@ _CACHE = {
     "products": {"ts": 0.0, "data": []},
     "stock": {"ts": 0.0, "data": {}},
     "stock_prices": {"ts": 0.0, "data": {}, "key": ""},
+    "stock_text": {"ts": 0.0, "data": ""},
     "promo_settings": {"ts": 0.0, "data": {}},
     "slot_counts": {"ts": 0.0, "data": {}},
 }
@@ -186,8 +193,13 @@ def _ts() -> float:
 def invalidate_stock_cache():
     _CACHE["stock"]["ts"] = 0.0
     _CACHE["stock_prices"]["ts"] = 0.0
+    _CACHE["stock_text"]["ts"] = 0.0
 
-def load_products_cached(ttl: int = 300) -> List[Dict[str, Any]]:
+def load_products_cached(ttl: Optional[int] = None, force: bool = False) -> List[Dict[str, Any]]:
+    if ttl is None:
+        ttl = PRODUCT_CACHE_TTL_SECONDS
+    if force:
+        _CACHE["products"]["ts"] = 0.0
     if _ts() - _CACHE["products"]["ts"] < ttl and _CACHE["products"]["data"]:
         return _CACHE["products"]["data"]
     try:
@@ -204,7 +216,11 @@ def normalize_order_ref(s: str) -> str:
     # giữ chữ/số, bỏ hết ký tự lạ như '-', ' ', '.', ...
     return re.sub(r"[^A-Za-z0-9]", "", (s or "")).upper()
 
-def stock_count_ready_by_code_cached(ttl: int = 120) -> Dict[str, int]:
+def stock_count_ready_by_code_cached(ttl: Optional[int] = None, force: bool = False) -> Dict[str, int]:
+    if ttl is None:
+        ttl = STOCK_CACHE_TTL_SECONDS
+    if force:
+        invalidate_stock_cache()
     if _ts() - _CACHE["stock"]["ts"] < ttl and _CACHE["stock"]["data"]:
         return _CACHE["stock"]["data"]
     try:
@@ -1516,7 +1532,7 @@ def load_products() -> List[Dict[str, Any]]:
     for r in rows:
         product_id = (r.get("product_id") or "").strip()
         name = (r.get("name") or "").strip()
-        stock_code = (r.get("stock_code") or "").strip()
+        stock_code = (r.get("stock_code") or "").strip().upper()
         base_price = normalize_int(r.get("price"), 0)
         duration_days = normalize_int(r.get("duration_days") or r.get("total_days"), 0)
         expires_at = (r.get("expires_at") or r.get("expire_at") or r.get("expiry_at") or "").strip()
@@ -1550,7 +1566,7 @@ def stock_count_ready_by_code() -> Dict[str, int]:
     rows = get_all_records(_ws_pool)
     cnt: Dict[str, int] = {}
     for r in rows:
-        sc = (r.get("stock_code") or "").strip()
+        sc = (r.get("stock_code") or "").strip().upper()
         st = (r.get("status") or "").strip().upper()
         if sc and st == "READY":
             cnt[sc] = cnt.get(sc, 0) + 1
@@ -1575,7 +1591,7 @@ def stock_price_preview_by_code(
     previews: Dict[str, Dict[str, Any]] = {}
     preview_order: Dict[str, Tuple[str, int]] = {}
     for rownum, row in enumerate(rows[1:], start=2):
-        stock_code = row[c_stock - 1].strip() if c_stock - 1 < len(row) else ""
+        stock_code = row[c_stock - 1].strip().upper() if c_stock - 1 < len(row) else ""
         status = row[c_status - 1].strip().upper() if c_status - 1 < len(row) else ""
         if not stock_code or status != "READY":
             continue
@@ -1609,7 +1625,7 @@ def stock_price_preview_for_products(products: List[Dict[str, Any]]) -> Dict[str
 
     ready_rows: Dict[str, List[Tuple[int, List[str]]]] = {}
     for rownum, row in enumerate(rows[1:], start=2):
-        stock_code = row[c_stock - 1].strip() if c_stock - 1 < len(row) else ""
+        stock_code = row[c_stock - 1].strip().upper() if c_stock - 1 < len(row) else ""
         status = row[c_status - 1].strip().upper() if c_status - 1 < len(row) else ""
         if stock_code and status == "READY":
             ready_rows.setdefault(stock_code, []).append((rownum, row))
@@ -1688,13 +1704,14 @@ def reserve_items_from_pool(
 
     now = now_str()
     exp = (now_dt() + timedelta(seconds=hold_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+    wanted_stock_code = str(stock_code or "").strip().upper()
 
     ready_items: List[Tuple[int, Dict[str, Any]]] = []
     for idx in range(2, len(rows) + 1):
         r = rows[idx - 1]
         sc = r[col_stock - 1].strip() if col_stock - 1 < len(r) else ""
         st = r[col_status - 1].strip().upper() if col_status - 1 < len(r) else ""
-        if sc == stock_code and st == "READY":
+        if sc.strip().upper() == wanted_stock_code and st == "READY":
             item_id = r[col_item_id - 1].strip() if col_item_id - 1 < len(r) else ""
             secret = r[col_secret - 1].strip() if col_secret - 1 < len(r) else ""
             pricing = stock_item_pricing(
@@ -2167,7 +2184,6 @@ def support_text() -> str:
         "💬 *HỖ TRỢ & CHĂM SÓC KHÁCH HÀNG*\n\n"
         "Nếu bạn gặp bất kỳ vấn đề nào, cứ nhắn mình nhé:\n\n\n"
         f"👤 *Phụ trách:* {SUPPORT_ADMIN_NAME}\n\n"
-        f"📱 *Zalo:* `{SUPPORT_ZALO}`\n\n"
         f"✈️ *Telegram:* {SUPPORT_TELE}\n\n"
         "🤝 Mình luôn sẵn sàng hỗ trợ bạn *bất kể giờ nào* (có thể phản hồi chậm hơn vào giờ khuya).\n\n"
         "👉 Bấm nút bên dưới để liên hệ ngay."
@@ -2177,8 +2193,6 @@ def support_text() -> str:
 
 def support_kb() -> InlineKeyboardMarkup:
     rows: List[List[InlineKeyboardButton]] = []
-    if SUPPORT_ZALO_LINK:
-        rows.append([InlineKeyboardButton("📱 Nhắn Zalo", url=SUPPORT_ZALO_LINK)])
     if SUPPORT_TELE_LINK:
         rows.append([InlineKeyboardButton("✈️ Nhắn Telegram", url=SUPPORT_TELE_LINK)])
     rows.append([InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")])
@@ -2243,13 +2257,13 @@ def welcome_inline_kb() -> InlineKeyboardMarkup:
     ])
 
 
-async def stock_update_text() -> str:
-    products = await gs_call(load_products_cached)
-    stock_ready = await gs_call(stock_count_ready_by_code_cached)
+async def stock_update_text(force_refresh: bool = False) -> str:
+    products = await gs_call(load_products_cached, None, force_refresh)
+    stock_ready = await gs_call(stock_count_ready_by_code_cached, None, force_refresh)
     available = [
-        (product, stock_ready.get(product["stock_code"], 0))
+        (product, stock_ready.get(str(product["stock_code"]).strip().upper(), 0))
         for product in products
-        if stock_ready.get(product["stock_code"], 0) > 0
+        if stock_ready.get(str(product["stock_code"]).strip().upper(), 0) > 0
     ]
     available.sort(key=lambda item: item[1], reverse=True)
     total = sum(qty for _, qty in available)
@@ -2276,6 +2290,20 @@ async def stock_update_text() -> str:
     return "\n".join(lines)
 
 
+async def stock_update_text_cached(force_refresh: bool = False) -> str:
+    cached = _CACHE["stock_text"]
+    if (
+        not force_refresh
+        and cached.get("data")
+        and _ts() - float(cached.get("ts") or 0) < STOCK_TEXT_CACHE_TTL_SECONDS
+    ):
+        return str(cached["data"])
+
+    text = await stock_update_text(force_refresh=force_refresh)
+    _CACHE["stock_text"] = {"ts": _ts(), "data": text}
+    return text
+
+
 async def send_support(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         chat_id=chat_id,
@@ -2294,7 +2322,7 @@ def build_products_menu_kb(
     slot_counts = slot_counts or {}
 
     for p in products:
-        sc = p["stock_code"]
+        sc = str(p["stock_code"]).strip().upper()
         slot_mode = is_slot_product(p)
         ready = slot_remaining(p, slot_counts) if slot_mode else stock_ready.get(sc, 0)
 
@@ -2456,7 +2484,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await show_products(update.effective_user.id, context)
+    force_refresh = update.effective_user.id in ADMIN_IDS
+    await show_products(update.effective_user.id, context, force_stock_refresh=force_refresh)
 
 async def cmd_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_orders(update.effective_user.id, context)
@@ -2728,10 +2757,10 @@ async def send_mail_help(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ================== PRODUCTS FLOW ==================
-async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
+async def show_products(chat_id: int, context: ContextTypes.DEFAULT_TYPE, force_stock_refresh: bool = False):
     try:
-        products = await gs_call(load_products_cached)
-        stock_ready = await gs_call(stock_count_ready_by_code_cached)
+        products = await gs_call(load_products_cached, None, force_stock_refresh)
+        stock_ready = await gs_call(stock_count_ready_by_code_cached, None, force_stock_refresh)
         slot_counts = await gs_call(slot_taken_count_by_code_cached) if any(is_slot_product(p) for p in products) else {}
         stock_prices = await gs_call(stock_price_preview_for_products_cached, products)
         products = [{**p, **stock_prices.get(p["product_id"], {})} for p in products]
@@ -2799,7 +2828,7 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
         p = {**p, "slot_used": used, "slot_taken": used, "slot_remaining": ready}
     else:
         ready_map = await gs_call(stock_count_ready_by_code_cached)
-        ready = ready_map.get(p["stock_code"], 0)
+        ready = ready_map.get(str(p["stock_code"]).strip().upper(), 0)
         stock_prices = await gs_call(
             stock_price_preview_by_code,
             {p["stock_code"]: int(p["price"])},
@@ -3313,7 +3342,7 @@ async def checkout_flow(
 
     # ✅ đọc stock bằng cache + thread
     ready_map = await gs_call(stock_count_ready_by_code_cached)
-    ready = ready_map.get(product["stock_code"], 0)
+    ready = ready_map.get(str(product["stock_code"]).strip().upper(), 0)
 
     if qty > ready:
         msg = f"❌ Kho không đủ.\nCòn lại: {ready} | Bạn chọn: {qty}"
@@ -4381,9 +4410,9 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await send_2fa_from_text(update, context, text)
 
     if text == BTN_PRODUCTS or "sản phẩm" in menu_text or "san pham" in menu_text:
-        return await show_products(user.id, context)
+        return await show_products(user.id, context, force_stock_refresh=user.id in ADMIN_IDS)
     if text == BTN_SLOTS or "mua slot" in menu_text or menu_text == "slot":
-        return await show_products(user.id, context)
+        return await show_products(user.id, context, force_stock_refresh=user.id in ADMIN_IDS)
     if text == BTN_SUPPORT or "hỗ trợ" in menu_text or "ho tro" in menu_text:
         return await send_support(user.id, context)
     if text == BTN_ORDERS or "đơn hàng" in menu_text or "don hang" in menu_text:
@@ -4399,6 +4428,78 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ================== CALLBACK ROUTER ==================
+async def send_stock_broadcast(context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None) -> Tuple[int, int]:
+    user_ids = await gs_call(get_all_user_chat_ids)
+    ok = fail = 0
+    for cid in user_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=cid,
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+            )
+            ok += 1
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            fail += 1
+            logger.warning("send stock broadcast fail chat_id=%s err=%s", cid, e)
+    return ok, fail
+
+
+async def auto_stock_notify_job(context: ContextTypes.DEFAULT_TYPE):
+    """Detect stock codes that move from out-of-stock to READY and broadcast once."""
+    global LAST_READY_STOCK
+
+    if not AUTO_STOCK_NOTIFY:
+        return
+    if STOCK_NOTIFY_LOCK.locked():
+        return
+
+    async with STOCK_NOTIFY_LOCK:
+        try:
+            ready_map = await gs_call(stock_count_ready_by_code)
+        except Exception as e:
+            logger.warning("auto stock notify skipped, stock load failed: %s", e)
+            return
+
+        current = {str(code): int(qty) for code, qty in ready_map.items() if int(qty) > 0}
+        if LAST_READY_STOCK is None:
+            LAST_READY_STOCK = dict(current)
+            logger.info("auto stock notify baseline ready=%s", len(LAST_READY_STOCK))
+            return
+
+        newly_available = {
+            code: qty
+            for code, qty in current.items()
+            if qty > 0 and int(LAST_READY_STOCK.get(code, 0)) <= 0
+        }
+        LAST_READY_STOCK = dict(current)
+        if not newly_available:
+            return
+
+        invalidate_stock_cache()
+        try:
+            text = await stock_update_text_cached(force_refresh=True)
+        except Exception:
+            logger.exception("build auto stock update failed")
+            text = "✅ *HÀNG ĐÃ VỀ*\n\n🔥 Sản phẩm đã có hàng lại!\n👉 Bấm nút bên dưới để mua nhé."
+
+        ok, fail = await send_stock_broadcast(context, text, stock_update_kb())
+        logger.info("auto stock notify sent ok=%s fail=%s stock_codes=%s", ok, fail, ",".join(sorted(newly_available)))
+
+        for admin_id in ADMIN_IDS:
+            try:
+                codes = ", ".join(f"{code} ({qty})" for code, qty in sorted(newly_available.items()))
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=f"Auto báo hàng về đã gửi: {ok} | Lỗi: {fail}\nMã mới có hàng: {codes}",
+                )
+            except Exception as e:
+                logger.warning("auto stock notify admin message failed admin_id=%s err=%s", admin_id, e)
+
+
 async def run_hangve_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_chat_id: int, custom_text: str) -> None:
     if HANGVE_LOCK.locked():
         await context.bot.send_message(chat_id=admin_chat_id, text="Đang có một lượt /hangve chạy rồi, đợi xong giúp mình nhé.")
@@ -4409,28 +4510,13 @@ async def run_hangve_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_chat_id
         reply_markup = buy_suggestion_kb()
         if not text:
             try:
-                text = await stock_update_text()
+                text = await stock_update_text_cached(force_refresh=custom_text == "")
                 reply_markup = stock_update_kb()
             except Exception:
                 logger.exception("build stock update failed")
                 text = "✅ *HÀNG ĐÃ VỀ*\n\n🔥 Sản phẩm đã có hàng lại!\n👉 Bấm nút bên dưới để mua nhé."
 
-        user_ids = await gs_call(get_all_user_chat_ids)
-        ok = fail = 0
-        for cid in user_ids:
-            try:
-                await context.bot.send_message(
-                    chat_id=cid,
-                    text=text,
-                    parse_mode="Markdown",
-                    reply_markup=reply_markup,
-                    disable_web_page_preview=True,
-                )
-                ok += 1
-                await asyncio.sleep(0.05)
-            except Exception as e:
-                fail += 1
-                logger.warning("send hangve fail chat_id=%s err=%s", cid, e)
+        ok, fail = await send_stock_broadcast(context, text, reply_markup)
 
         await context.bot.send_message(chat_id=admin_chat_id, text=f"Đã gửi: {ok} | Lỗi: {fail}")
 
@@ -4457,7 +4543,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.message.delete()
         except Exception:
             pass
-        return await show_products(q.from_user.id, context)
+        return await show_products(q.from_user.id, context, force_stock_refresh=q.from_user.id in ADMIN_IDS)
 
     if data == "go_orders":
         await q.answer()
@@ -4486,7 +4572,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "refresh_stock":
         await q.answer("Đang cập nhật kho...")
         try:
-            text = await stock_update_text()
+            force_refresh = USER_FORCE_REFRESH_STOCK or q.from_user.id in ADMIN_IDS
+            text = await stock_update_text_cached(force_refresh=force_refresh)
             await q.message.edit_text(
                 text=text,
                 parse_mode="Markdown",
@@ -4538,7 +4625,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.message.delete()
         except Exception:
             pass
-        return await show_products(q.from_user.id, context)
+        return await show_products(q.from_user.id, context, force_stock_refresh=q.from_user.id in ADMIN_IDS)
 
     if data.startswith("pdetail|"):
         pid = data.split("|", 1)[1]
@@ -4689,6 +4776,13 @@ def configure_application(app: Application) -> Application:
             first=120,
             name="release_overdue_pending",
         )
+        if AUTO_STOCK_NOTIFY:
+            app.job_queue.run_repeating(
+                auto_stock_notify_job,
+                interval=AUTO_STOCK_NOTIFY_INTERVAL_SECONDS,
+                first=15,
+                name="auto_stock_notify",
+            )
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler(["shop", "sanpham"], cmd_shop))
