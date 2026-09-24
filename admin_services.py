@@ -110,9 +110,9 @@ def _plain_stock_update_text() -> str:
     products = shop.load_products_cached()
     stock_ready = shop.stock_count_ready_by_code_cached()
     available = [
-        (product, stock_ready.get(product["stock_code"], 0))
+        (product, stock_ready.get(str(product["stock_code"]).strip().upper(), 0))
         for product in products
-        if stock_ready.get(product["stock_code"], 0) > 0
+        if stock_ready.get(str(product["stock_code"]).strip().upper(), 0) > 0
     ]
     available.sort(key=lambda item: item[1], reverse=True)
     total = sum(qty for _, qty in available)
@@ -858,7 +858,7 @@ def _snapshot_uncached(limit: int = 100, pool_limit: int = 2000, include_materia
 
     stock_counts: Dict[str, Dict[str, int]] = {}
     for item in pool:
-        code = (item.get("stock_code") or "").strip()
+        code = (item.get("stock_code") or "").strip().upper()
         status = (item.get("status") or "UNKNOWN").strip().upper()
         if not code:
             continue
@@ -883,7 +883,7 @@ def _snapshot_uncached(limit: int = 100, pool_limit: int = 2000, include_materia
 
     product_rows = []
     for product in products:
-        code = product.get("stock_code", "")
+        code = str(product.get("stock_code", "")).strip().upper()
         counts = stock_counts.get(code, {"READY": 0, "HELD": 0, "SOLD": 0, "OTHER": 0})
         if shop.is_slot_product(product):
             limit_count = shop.slot_limit(product)
@@ -996,11 +996,21 @@ def _snapshot_uncached(limit: int = 100, pool_limit: int = 2000, include_materia
     return result
 
 
-def snapshot(limit: int = 100, pool_limit: int = 2000, include_materials: bool = False) -> Dict[str, Any]:
+def snapshot(
+    limit: int = 100,
+    pool_limit: int = 2000,
+    include_materials: bool = False,
+    refresh: bool = False,
+) -> Dict[str, Any]:
     key = f"{int(limit or 100)}:{int(pool_limit or 2000)}:{bool(include_materials)}"
     now = time.time()
     cached = _SNAPSHOT_CACHE.get("data")
-    if cached and _SNAPSHOT_CACHE.get("key") == key and now - float(_SNAPSHOT_CACHE.get("ts") or 0) < SNAPSHOT_CACHE_SECONDS:
+    if (
+        not refresh
+        and cached
+        and _SNAPSHOT_CACHE.get("key") == key
+        and now - float(_SNAPSHOT_CACHE.get("ts") or 0) < SNAPSHOT_CACHE_SECONDS
+    ):
         result = deepcopy(cached)
         result["cache_status"] = "fresh"
         return result

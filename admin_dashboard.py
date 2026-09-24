@@ -347,7 +347,7 @@ async function loadData(){
   localStorage.setItem("admin_key", key());
   msg("Dang tai du lieu...");
   try {
-    DATA = await api("/admin/api/snapshot?limit=150");
+    DATA = await api("/admin/api/snapshot?limit=150&pool_limit=30000&refresh=1");
     render();
     msg(`Cap nhat luc: ${DATA.generated_at} (${DATA.timezone})`);
   } catch(e) { msg(e.message); }
@@ -454,10 +454,16 @@ def register_admin_routes(app: FastAPI) -> None:
         return {"ok": True}
 
     @app.get("/admin/api/snapshot")
-    async def admin_snapshot(request: Request, limit: int = 100, pool_limit: int = 2000, include_materials: bool = False):
+    async def admin_snapshot(
+        request: Request,
+        limit: int = 100,
+        pool_limit: int = 2000,
+        include_materials: bool = False,
+        refresh: bool = False,
+    ):
         require_admin(request)
         try:
-            return await asyncio.to_thread(snapshot, limit, pool_limit, include_materials)
+            return await asyncio.to_thread(snapshot, limit, pool_limit, include_materials, refresh)
         except Exception as exc:
             logger.exception("admin_snapshot failed")
             raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -1,4 +1,4 @@
-﻿import os
+import os
 import re
 import io
 import logging
@@ -119,6 +119,8 @@ PAYMENT_INFO = {
 SUPPORT_ADMIN_NAME = os.getenv("SUPPORT_ADMIN_NAME", "Le Van Khoi").strip()
 SUPPORT_TELE = os.getenv("SUPPORT_TELE", "@khoivancw").strip()
 SUPPORT_TELE_LINK = os.getenv("SUPPORT_TELE_LINK", "https://t.me/khoivancw").strip()
+SUPPORT_ZALO = os.getenv("SUPPORT_ZALO", "").strip()
+SUPPORT_ZALO_LINK = os.getenv("SUPPORT_ZALO_LINK", "").strip()
 
 # ================== GLOBAL STATE ==================
 _gs_client = None
@@ -2148,53 +2150,75 @@ BTN_SLOTS    = "🎟 Mua slot".replace("\ufe0f","")
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     kb = [
-        [KeyboardButton(BTN_PRODUCTS), KeyboardButton(BTN_SUPPORT)],
-        [KeyboardButton(BTN_SLOTS), KeyboardButton(BTN_ORDERS)],
-        [KeyboardButton(BTN_2FA), KeyboardButton(BTN_MAIL)],
+        [KeyboardButton(BTN_PRODUCTS)],
+        [KeyboardButton(BTN_ORDERS), KeyboardButton(BTN_SUPPORT)],
     ]
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
 
 
 def welcome_text(user_fullname: str) -> str:
-    safe_name = escape_markdown(str(user_fullname or ""), version=1)
     safe_shop = escape_markdown(str(SHOP_NAME or "Shop"), version=1)
-    return (
-        f"👋 *Xin chào {safe_name}!* \n\n"
-        f"*{safe_shop}* rất vui được phục vụ bạn.\n\n\n"
-        "✅ Hàng số chuẩn • giao tự động 24/7\n\n"
-        "⚡️ Thanh toán nhanh • VietQR / chuyển khoản\n\n"
-        "🛡 Bảo mật riêng tư • thông tin được bảo vệ tuyệt đối\n\n\n"
-        "📌 *Lệnh nhanh:*\n\n"
-        "/start - Menu chính\n\n"
-        "/shop - Xem sản phẩm\n\n"
-        "/orders - Đơn hàng của bạn\n\n"
-        "/game - Chơi game\n\n"
-        "/support - Hỗ trợ\n\n"
-        "/2fa - Lấy mã 2FA từ secret\n\n"
-        f"🫡 “Mỗi đơn hàng bạn đặt tại {safe_shop} không chỉ là một sản phẩm — đó là sự tin tưởng bạn gửi gắm, "
-        "và là cam kết chúng tôi luôn giữ trọn.”\n\n"
-    )
+    lines = [
+        f"*{safe_shop}* 🤖",
+        "",
+    ]
+    if SUPPORT_TELE_LINK:
+        lines.append(f"📱 *Hỗ trợ:* {SUPPORT_TELE_LINK}")
+    elif SUPPORT_TELE:
+        lines.append(f"📱 *Hỗ trợ:* `{SUPPORT_TELE}`")
+
+    if SUPPORT_ZALO_LINK:
+        lines.append(f"😊 *Zalo:* {SUPPORT_ZALO_LINK}")
+    elif SUPPORT_ZALO:
+        lines.append(f"😊 *Zalo:* `{SUPPORT_ZALO}`")
+
+    lines.extend([
+        "",
+        "⬇️ *Vui lòng chọn danh mục/sản phẩm bên dưới.* ⬇️",
+    ])
+    return "\n".join(lines)
 
 
 
 # ================== SUPPORT ==================
 def support_text() -> str:
-    return (
-        "💬 *HỖ TRỢ & CHĂM SÓC KHÁCH HÀNG*\n\n"
-        "Nếu bạn gặp bất kỳ vấn đề nào, cứ nhắn mình nhé:\n\n\n"
-        f"👤 *Phụ trách:* {SUPPORT_ADMIN_NAME}\n\n"
-        f"✈️ *Telegram:* {SUPPORT_TELE}\n\n"
-        "🤝 Mình luôn sẵn sàng hỗ trợ bạn *bất kể giờ nào* (có thể phản hồi chậm hơn vào giờ khuya).\n\n"
-        "👉 Bấm nút bên dưới để liên hệ ngay."
-    )
+    safe_admin = escape_markdown(SUPPORT_ADMIN_NAME or "Admin", version=1)
+    lines = [
+        "💬 *HỖ TRỢ & CHĂM SÓC KHÁCH HÀNG*",
+        "",
+        "Nếu bạn gặp bất kỳ vấn đề nào, cứ nhắn mình nhé:",
+        "",
+        f"👤 *Phụ trách:* {safe_admin}",
+    ]
+    if SUPPORT_TELE_LINK:
+        lines.append(f"✈️ *Telegram:* {SUPPORT_TELE_LINK}")
+    elif SUPPORT_TELE:
+        lines.append(f"✈️ *Telegram:* `{SUPPORT_TELE}`")
+
+    if SUPPORT_ZALO_LINK:
+        lines.append(f"😊 *Zalo:* {SUPPORT_ZALO_LINK}")
+    elif SUPPORT_ZALO:
+        lines.append(f"😊 *Zalo:* `{SUPPORT_ZALO}`")
+
+    lines.extend([
+        "",
+        "🤝 Luôn sẵn sàng hỗ trợ bạn nhanh nhất có thể.",
+        "👉 Bấm nút bên dưới để liên hệ ngay.",
+    ])
+    return "\n".join(lines)
 
 
 
 def support_kb() -> InlineKeyboardMarkup:
     rows: List[List[InlineKeyboardButton]] = []
+    btn_row = []
     if SUPPORT_TELE_LINK:
-        rows.append([InlineKeyboardButton("✈️ Nhắn Telegram", url=SUPPORT_TELE_LINK)])
+        btn_row.append(InlineKeyboardButton("✈️ Nhắn Telegram", url=SUPPORT_TELE_LINK))
+    if SUPPORT_ZALO_LINK:
+        btn_row.append(InlineKeyboardButton("😊 Nhắn Zalo", url=SUPPORT_ZALO_LINK))
+    if btn_row:
+        rows.append(btn_row)
     rows.append([InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
 
@@ -2202,16 +2226,13 @@ def support_kb() -> InlineKeyboardMarkup:
 def quick_actions_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🛍 Sản phẩm", callback_data="go_products"),
+            InlineKeyboardButton("🛍 Xem sản phẩm", callback_data="go_products"),
             InlineKeyboardButton("📦 Đơn hàng", callback_data="go_orders"),
         ],
-        [InlineKeyboardButton("🎟 Mua slot", callback_data="go_slots")],
         [
-            InlineKeyboardButton("🔐 2FA", callback_data="2fa_help"),
-            InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help"),
+            InlineKeyboardButton("💬 Hỗ trợ", callback_data="go_support"),
+            InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main"),
         ],
-        [InlineKeyboardButton("🔄 Đọc lại thư", callback_data="mail_repeat")],
-        [InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main")],
     ])
 
 
@@ -2219,7 +2240,7 @@ def mail_retry_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 Đọc lại mail này", callback_data="mail_repeat")],
         [
-            InlineKeyboardButton("🛍 Sản phẩm", callback_data="go_products"),
+            InlineKeyboardButton("🛍 Xem sản phẩm", callback_data="go_products"),
             InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main"),
         ],
     ])
@@ -2227,32 +2248,24 @@ def mail_retry_kb() -> InlineKeyboardMarkup:
 
 def buy_suggestion_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 Đi mua hàng", callback_data="go_products")],
-        [InlineKeyboardButton("✨ Gợi ý sản phẩm", callback_data="refresh_stock")],
+        [InlineKeyboardButton("🛒 Mua ngay", callback_data="go_products")],
+        [InlineKeyboardButton("🛍️ Mua sản phẩm khác", callback_data="go_products")],
     ])
 
 
 def stock_update_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 Đi mua hàng", callback_data="go_products")],
-        [InlineKeyboardButton("✨ Làm mới gợi ý", callback_data="refresh_stock")],
+        [InlineKeyboardButton("🛒 Mua ngay", callback_data="go_products")],
+        [InlineKeyboardButton("🛍️ Mua sản phẩm khác", callback_data="go_products")],
     ])
 
 
 def welcome_inline_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛍 Xem sản phẩm", callback_data="go_products")],
         [
-            InlineKeyboardButton("🛍 Sản phẩm", callback_data="go_products"),
-            InlineKeyboardButton("📦 Đơn hàng", callback_data="go_orders"),
-        ],
-        [InlineKeyboardButton("🎟 Mua slot", callback_data="go_slots")],
-        [
-            InlineKeyboardButton("✨ Cập nhật kho", callback_data="refresh_stock"),
+            InlineKeyboardButton("📦 Đơn hàng của bạn", callback_data="go_orders"),
             InlineKeyboardButton("💬 Hỗ trợ", callback_data="go_support"),
-        ],
-        [
-            InlineKeyboardButton("🔐 2FA", callback_data="2fa_help"),
-            InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help"),
         ],
     ])
 
@@ -2266,28 +2279,31 @@ async def stock_update_text(force_refresh: bool = False) -> str:
         if stock_ready.get(str(product["stock_code"]).strip().upper(), 0) > 0
     ]
     available.sort(key=lambda item: item[1], reverse=True)
-    total = sum(qty for _, qty in available)
 
     lines = [
-        "📦 *CẬP NHẬT KHO HÀNG ✨*",
-        "",
-        f"🕒 Cập nhật: `{escape_markdown(now_str(), version=1)}`",
-        f"📊 Sản phẩm còn hàng: *{len(available)}* | Tổng tồn: *{total}*",
-        "",
-        "*Tồn kho hiện tại:*",
+        "📦 *KHO HÀNG VỪA CẬP NHẬT!*",
         "",
     ]
     if not available:
         lines.append("⛔ Hiện chưa có sản phẩm còn hàng.")
+    elif len(available) == 1:
+        p, qty = available[0]
+        lines.extend([
+            f"🛒 ✅ *{escape_markdown(p['name'], version=1)}*",
+            "",
+            f"💰 Giá: *{fmt_price(p['price'])}*",
+            f"📊 Số lượng vừa nhập: *{qty}*",
+            f"📦 Tổng còn trong kho: *{qty}*",
+        ])
     else:
-        for product, qty in available[:8]:
-            icon = "🟢" if qty >= 5 else "🟡"
-            lines.append(
-                f"{icon} 📘 *{product['name']}*\n"
-                f"• Số lượng: *{qty}*  • Giá: *{fmt_price(product['price'])}*"
-            )
-    lines.extend(["", "👉 Bấm *Đi mua hàng* để chọn sản phẩm cần mua."])
-    return "\n".join(lines)
+        for product, qty in available[:5]:
+            lines.extend([
+                f"🛒 ✅ *{escape_markdown(product['name'], version=1)}*",
+                f"💰 Giá: *{fmt_price(product['price'])}*",
+                f"📦 Tổng còn trong kho: *{qty}*",
+                "",
+            ])
+    return "\n".join(lines).strip()
 
 
 async def stock_update_text_cached(force_refresh: bool = False) -> str:
@@ -2344,11 +2360,6 @@ def build_products_menu_kb(
     buttons.append([
         InlineKeyboardButton("📦 Đơn hàng", callback_data="go_orders"),
         InlineKeyboardButton("💬 Hỗ trợ", callback_data="go_support"),
-    ])
-
-    buttons.append([
-        InlineKeyboardButton("🔐 2FA", callback_data="2fa_help"),
-        InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help"),
     ])
 
     # Menu chính
@@ -2498,10 +2509,8 @@ async def setup_bot_commands(app: Application) -> None:
     commands = [
         BotCommand("start", "Menu chính"),
         BotCommand("shop", "Xem sản phẩm"),
-        BotCommand("sanpham", "Xem sản phẩm"),
         BotCommand("orders", "Đơn hàng của bạn"),
-        BotCommand("support", "Hỗ trợ"),
-        BotCommand("hotro", "Hỗ trợ"),
+        BotCommand("support", "Hỗ trợ khách hàng"),
         BotCommand("2fa", "Lấy mã 2FA"),
         BotCommand("mail", "Đọc hòm thư"),
     ]

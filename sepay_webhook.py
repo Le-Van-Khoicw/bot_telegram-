@@ -1,4 +1,4 @@
-﻿import os
+import os
 import io
 import re
 import asyncio
@@ -74,10 +74,17 @@ async def notify_admins(text: str) -> None:
 
 
 def kb_after_delivery() -> InlineKeyboardMarkup:
-    rows: List[List[InlineKeyboardButton]] = []
+    rows: List[List[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton("🔐 Lấy mã 2FA", callback_data="2fa_help"),
+            InlineKeyboardButton("📬 Đọc mail", callback_data="mail_help"),
+        ]
+    ]
+    sub: List[InlineKeyboardButton] = []
     if SUPPORT_TELE_LINK:
-        rows.append([InlineKeyboardButton("💬 Hỗ trợ", url=SUPPORT_TELE_LINK)])
-    rows.append([InlineKeyboardButton("⬅️ Menu", callback_data="back_main")])
+        sub.append(InlineKeyboardButton("💬 Hỗ trợ", url=SUPPORT_TELE_LINK))
+    sub.append(InlineKeyboardButton("⬅️ Menu chính", callback_data="back_main"))
+    rows.append(sub)
     return InlineKeyboardMarkup(rows)
 
 ORDER_TTL_SECONDS = min(int(os.getenv("ORDER_TTL_SECONDS", "300")), 300)  # tối đa 5 phút
@@ -594,7 +601,7 @@ def kb_support_only() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([row])
 
 def kb_delivered() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Menu", callback_data="back_main")]])
+    return kb_after_delivery()
 
 
 def caption_delivered(order_id: str, stock_code: str, qty: int) -> str:
@@ -604,7 +611,8 @@ def caption_delivered(order_id: str, stock_code: str, qty: int) -> str:
         f"📦 SP: `{stock_code}`\n"
         f"🔢 SL: *{qty}*\n"
         "🎁 Đã giao hàng tự động.\n\n"
-        "📋 *Thông tin nhận được đã gửi ở tin nhắn bên dưới* để bạn bấm giữ/copy ngay."
+        "📋 Thông tin nhận được đã gửi ở tin nhắn bên dưới để bạn copy.\n"
+        "💡 Bấm các nút bên dưới nếu bạn cần lấy mã 2FA hoặc đọc hòm thư lấy OTP."
     )
 
 
@@ -728,7 +736,7 @@ async def send_delivery_message(user_id: int, order_id: str, stock_code: str, qt
                 chat_id=user_id,
                 text=chunk,
                 parse_mode=ParseMode.HTML if len(direct_text) <= 3800 else None,
-                reply_markup=kb_support_only() if start + 3800 >= len(direct_text) else None,
+                reply_markup=kb_after_delivery() if start + 3800 >= len(direct_text) else None,
                 disable_web_page_preview=True,
             )
         sent_any = True
