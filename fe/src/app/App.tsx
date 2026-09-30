@@ -16,8 +16,8 @@ import { Button } from "./components/ui/button";
 import { adminApi, money, text, type AdminSnapshot } from "./api";
 import { clearToken, getToken, saveToken } from "./utils/auth";
 
-const POLL_MS = 300_000;
-const SNAPSHOT_PATH = "/admin/api/snapshot?limit=300&pool_limit=5000";
+const POLL_MS = 30_000;
+const SNAPSHOT_PATH = "/admin/api/snapshot?limit=150&pool_limit=1000";
 const DEFAULT_ADMIN_TITLE = "Khoi Van Store Admin";
 
 export default function App() {
@@ -158,7 +158,10 @@ export default function App() {
     initializedRef.current = true;
   }, [playNotifySound]);
 
-  const refresh = useCallback(async (key = adminKey, options: { silent?: boolean } = {}) => {
+  const refresh = useCallback(async (
+    key = adminKey,
+    options: { silent?: boolean; force?: boolean } = {},
+  ) => {
     if (!key) return;
     if (refreshInFlightRef.current) return;
     refreshInFlightRef.current = true;
@@ -167,7 +170,8 @@ export default function App() {
       setMessage("Đang tải dữ liệu...");
     }
     try {
-      const next = await adminApi<AdminSnapshot>(SNAPSHOT_PATH, key);
+      const snapshotPath = options.force ? `${SNAPSHOT_PATH}&refresh=true` : SNAPSHOT_PATH;
+      const next = await adminApi<AdminSnapshot>(snapshotPath, key);
       notifyFromSnapshot(next);
       setData(next);
       setMessage(`Cập nhật lúc ${next.generated_at} (${next.timezone})`);
@@ -312,7 +316,7 @@ export default function App() {
                   </span>
                 )}
               </Button>
-              <Button size="sm" variant="outline" className="gap-2" onClick={() => refresh()} disabled={loading}>
+              <Button size="sm" variant="outline" className="gap-2" onClick={() => refresh(adminKey, { force: true })} disabled={loading}>
                 <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
                 Làm mới
               </Button>

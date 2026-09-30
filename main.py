@@ -7,6 +7,7 @@ import time
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from telegram import Update
 
 from admin_dashboard import register_admin_routes
@@ -17,6 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MAIN_ORCHESTRATOR")
 
 app = FastAPI()
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 telegram_app = None
 telegram_webhook_task = None
 PROCESSED_UPDATE_IDS = OrderedDict()

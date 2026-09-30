@@ -1527,6 +1527,20 @@ def mark_slot_participant_paid(order_id: str, paid_at: str) -> Optional[Dict[str
     return found
 
 # ================== PRODUCTS + STOCK ==================
+def generated_product_id(stock_code: str, name: str, price: int) -> str:
+    """Create a stable callback-safe id for manually entered product rows missing product_id."""
+    raw = f"{stock_code.strip().upper()}|{name.strip()}|{int(price)}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10].upper()
+    safe_code = re.sub(r"[^A-Z0-9]+", "", stock_code.upper())[:12] or "PRODUCT"
+    return f"AUTO-{safe_code}-{digest}"
+
+
+def generated_item_id(stock_code: str, rownum: int) -> str:
+    """Create an id for a manually entered stock row and persist it when reserved."""
+    safe_code = re.sub(r"[^A-Z0-9]+", "", stock_code.upper())[:16] or "ITEM"
+    return f"AUTO-{safe_code}-{rownum}"
+
+
 def load_products() -> List[Dict[str, Any]]:
     init_sheets()
     rows = get_all_records(_ws_products)
@@ -1545,7 +1559,14 @@ def load_products() -> List[Dict[str, Any]]:
         # ✅ lấy mô tả riêng từng sản phẩm (từ cột description)
         desc = (r.get("description") or "").strip()
 
-        if product_id and stock_code and name:
+        if stock_code and name and base_price > 0:
+            if not product_id:
+                product_id = generated_product_id(stock_code, name, base_price)
+                logger.warning(
+                    "PRODUCTS row missing product_id; using generated id=%s stock_code=%s",
+                    product_id,
+                    stock_code,
+                )
             out.append({
                 "product_id": product_id,
                 "name": name,
@@ -1715,6 +1736,8 @@ def reserve_items_from_pool(
         st = r[col_status - 1].strip().upper() if col_status - 1 < len(r) else ""
         if sc.strip().upper() == wanted_stock_code and st == "READY":
             item_id = r[col_item_id - 1].strip() if col_item_id - 1 < len(r) else ""
+            if not item_id:
+                item_id = generated_item_id(sc or wanted_stock_code, idx)
             secret = r[col_secret - 1].strip() if col_secret - 1 < len(r) else ""
             pricing = stock_item_pricing(
                 r,
@@ -1746,6 +1769,13 @@ def reserve_items_from_pool(
     cells: List[Cell] = []
     for rownum, _item in selected:
         cells.append(Cell(rownum, col_status, "HELD"))
+        current_item_id = (
+            rows[rownum - 1][col_item_id - 1].strip()
+            if col_item_id - 1 < len(rows[rownum - 1])
+            else ""
+        )
+        if not current_item_id:
+            cells.append(Cell(rownum, col_item_id, _item["item_id"]))
         if col_hold_oid:
             cells.append(Cell(rownum, col_hold_oid, order_id))
         if col_hold_at:
@@ -1925,6 +1955,8 @@ def mark_sold_and_get_secrets(order_id: str) -> List[Dict[str, str]]:
         if hold_oid == order_id and st == "HELD":
             item_id = r[c_item_id - 1].strip() if c_item_id and c_item_id - 1 < len(r) else ""
             stock_code = r[c_stock - 1].strip() if c_stock and c_stock - 1 < len(r) else ""
+            if not item_id:
+                item_id = generated_item_id(stock_code, idx)
             secret = r[c_secret - 1].strip() if c_secret - 1 < len(r) else ""
 
             # mark SOLD

@@ -494,6 +494,9 @@ def pool_take_held_and_mark_sold(order_id: str) -> List[Dict[str, str]]:
         if norm_oid(hold_oid) == norm_oid(order_id) and st == "HELD":
             item_id = (row[c_item] or "").strip() if c_item is not None and c_item < len(row) else ""
             stock_code = (row[c_stock] or "").strip() if c_stock is not None and c_stock < len(row) else ""
+            if not item_id:
+                import bot_shop as shop
+                item_id = shop.generated_item_id(stock_code, rownum)
             secret = (row[c_secret] or "").strip() if c_secret < len(row) else ""
 
             # ✅ THAY vì update_cell nhiều lần -> gom Cell
