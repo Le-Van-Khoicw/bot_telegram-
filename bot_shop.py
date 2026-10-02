@@ -813,6 +813,20 @@ def init_sheets():
     if _ws_orders and _ws_products and _ws_pool and _ws_res and _ws_users:
         return
 
+    from db_storage import get_postgres_spreadsheet, postgres_enabled
+
+    if postgres_enabled():
+        _gs_client = None
+        _gs_sheet = get_postgres_spreadsheet()
+        _ws_orders = _gs_sheet.worksheet(TAB_ORDERS)
+        _ws_products = _gs_sheet.worksheet(TAB_PRODUCTS)
+        _ws_pool = _gs_sheet.worksheet(TAB_POOL)
+        _ws_res = _gs_sheet.worksheet(TAB_RES)
+        _ws_users = _gs_sheet.worksheet(TAB_USERS)
+        _ws_ful = _gs_sheet.worksheet(TAB_FUL)
+        logger.info("PostgreSQL storage initialized")
+        return
+
     if not GSHEET_ID:
         raise RuntimeError("GSHEET_ID empty (hãy set ENV GSHEET_ID)")
 

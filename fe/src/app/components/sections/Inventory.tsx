@@ -7,7 +7,7 @@ import { Badge } from "../ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { Warehouse, Plus, RotateCcw, Copy } from "lucide-react";
+import { Warehouse, Plus, RotateCcw, Copy, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi, money, text, type AdminSnapshot } from "../../api";
 
@@ -184,6 +184,22 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
     }
   };
 
+  const deleteStock = async (item: any) => {
+    const itemId = text(item.item_id);
+    const status = text(item.status).toUpperCase();
+    if (!isRealCode(itemId)) return toast.warning("Item này chưa có item_id");
+    if (status === "HELD") return toast.warning("Item đang giữ cho đơn hàng nên không thể xóa");
+    if (!window.confirm(`Xóa vĩnh viễn item ${itemId} khỏi kho?`)) return;
+    setBusy(true);
+    try {
+      await adminApi(`/admin/api/stock/${encodeURIComponent(itemId)}`, adminKey, { method: "DELETE" });
+      toast.success(`Đã xóa ${itemId}`);
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const releaseHeld = async () => {
     setBusy(true);
     try {
@@ -317,6 +333,9 @@ export function Inventory({ data, adminKey, refresh, preset }: Props) {
                             </Button>
                             <Button size="sm" variant="outline" onClick={() => updateStockStatus(item, "READY")} disabled={busy || status === "READY"}>
                               Bán lại
+                            </Button>
+                            <Button size="sm" variant="destructive" onClick={() => deleteStock(item)} disabled={busy || status === "HELD"} title="Xóa khỏi kho">
+                              <Trash2 size={14} />
                             </Button>
                           </div>
                         </TableCell>

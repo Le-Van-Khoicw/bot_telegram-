@@ -279,6 +279,18 @@ def init_gsheet() -> None:
     if ws_orders and ws_pool and ws_res:
         return
 
+    from db_storage import get_postgres_spreadsheet, postgres_enabled
+
+    if postgres_enabled():
+        gs_client = None
+        gs_sheet = get_postgres_spreadsheet()
+        ws_orders = gs_sheet.worksheet(ORDERS_TAB)
+        ws_pool = gs_sheet.worksheet(POOL_TAB)
+        ws_res = gs_sheet.worksheet(RES_TAB)
+        ws_ful = gs_sheet.worksheet(FUL_TAB)
+        logger.info("PostgreSQL storage initialized for SePay webhook")
+        return
+
     if not GSHEET_ID:
         raise RuntimeError("Missing GSHEET_ID")
 

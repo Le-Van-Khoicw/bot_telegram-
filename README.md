@@ -1,6 +1,6 @@
 # Telegram Shop Bot
 
-Bot ban hang Telegram dung Google Sheets de quan ly san pham, ton kho, don hang va SePay webhook de xu ly thanh toan.
+Bot ban hang Telegram dung Google Sheets hoac PostgreSQL de quan ly san pham, ton kho, don hang va SePay webhook de xu ly thanh toan.
 
 ## File chinh
 
@@ -17,6 +17,8 @@ Copy `.env.example` thanh `.env` khi chay local. Tren Render, them cac bien nay 
 
 ```env
 BOT_TOKEN=
+STORAGE_BACKEND=sheets
+DATABASE_URL=
 GSHEET_ID=
 GOOGLE_JSON_CONTENT=
 SEPAY_API_KEY=
@@ -28,6 +30,19 @@ NOTE_TEMPLATE={order_id}
 ```
 
 `GOOGLE_JSON_CONTENT` la toan bo noi dung file Google service account JSON. Khong commit `.env` hoac `service_account.json`.
+
+## Chuyen tu Google Sheets sang PostgreSQL
+
+Ung dung mac dinh van dung Sheets de viec deploy code moi khong lam gian doan bot. Quy trinh chuyen an toan:
+
+1. Tao PostgreSQL (co the dung Supabase) va them `DATABASE_URL` vao may chay migration.
+2. Giu `STORAGE_BACKEND=sheets`, chay `python migrate_sheets_to_postgres.py` de copy tat ca worksheet sang PostgreSQL.
+3. Kiem tra so dong ma script bao cao va thu Admin Web.
+4. Tren Render dat `DATABASE_URL`, doi `STORAGE_BACKEND=postgres`, sau do redeploy.
+
+Co the chay lai migration ngay truoc buoc 4. Moi bang duoc thay the trong mot transaction: neu copy loi thi du lieu cu trong bang PostgreSQL van con nguyen. Khong xoa Google Sheets ngay; giu lai lam ban doi chieu/backup trong giai doan dau.
+
+Tab `Kho hang` trong Admin Web la giao dien quan ly du lieu `POOL`: them lo hang, doi trang thai va xoa item. Item dang `HELD` khong duoc xoa vi dang gan voi mot don hang.
 
 ## Chay local
 

@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from admin_services import add_stock, broadcast_stock_update, delete_expense, delete_product, delete_promotion, load_gpt_marks, load_materials, release_holds, release_order, save_expense, save_gpt_marks, save_materials, save_product, save_promotion, save_promo_settings, save_slot, snapshot, update_order, update_stock_item
+from admin_services import add_stock, broadcast_stock_update, delete_expense, delete_product, delete_promotion, delete_stock_item, load_gpt_marks, load_materials, release_holds, release_order, save_expense, save_gpt_marks, save_materials, save_product, save_promotion, save_promo_settings, save_slot, snapshot, update_order, update_stock_item
 from mail_reader import MailReaderError, check_gpt_plus_mail
 
 logger = logging.getLogger("admin_dashboard")
@@ -511,6 +511,14 @@ def register_admin_routes(app: FastAPI) -> None:
     async def admin_update_stock(request: Request):
         require_admin(request)
         return await asyncio.to_thread(update_stock_item, await request.json())
+
+    @app.delete("/admin/api/stock/{item_id}")
+    async def admin_delete_stock(item_id: str, request: Request):
+        require_admin(request)
+        try:
+            return await asyncio.to_thread(delete_stock_item, item_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/admin/api/orders/update")
     async def admin_update_order(request: Request):

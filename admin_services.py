@@ -1229,6 +1229,35 @@ def update_stock_item(data: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "item_id": item_id, "status": status}
 
 
+def delete_stock_item(item_id: str) -> Dict[str, Any]:
+    """Delete one inventory item, but never an item reserved by a live order."""
+    shop.init_sheets()
+    headers = _headers(shop._ws_pool)
+    if not headers:
+        raise RuntimeError("POOL thieu header")
+    item_id = str(item_id or "").strip()
+    if not item_id:
+        raise ValueError("Missing item_id")
+
+    c_item = headers.get("item_id")
+    c_status = headers.get("status")
+    if not c_item:
+        raise RuntimeError("POOL thieu cot item_id")
+    values = shop._ws_pool.get_all_values()
+    for rownum, row in enumerate(values[1:], start=2):
+        current_id = row[c_item - 1].strip() if c_item - 1 < len(row) else ""
+        if current_id != item_id:
+            continue
+        status = row[c_status - 1].strip().upper() if c_status and c_status - 1 < len(row) else ""
+        if status == "HELD":
+            raise ValueError("Item dang HELD cho mot don hang, khong the xoa")
+        shop._ws_pool.delete_rows(rownum)
+        shop.invalidate_stock_cache()
+        invalidate_snapshot_cache()
+        return {"ok": True, "item_id": item_id}
+    raise ValueError("Khong tim thay item trong kho")
+
+
 def _is_expired_hold(value: str) -> bool:
     dt = shop.parse_dt(value)
     return bool(dt and dt <= shop.now_dt())
