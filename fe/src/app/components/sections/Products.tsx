@@ -98,6 +98,7 @@ export function Products({ data, adminKey, refresh }: Props) {
     setSaving(true);
     try {
       await adminApi("/admin/api/products", adminKey, { method: "POST", body: JSON.stringify(form) });
+      toast.success(form.product_id ? "Đã lưu thay đổi sản phẩm" : "Đã thêm sản phẩm");
       setModalOpen(false);
       await refresh();
     } finally {

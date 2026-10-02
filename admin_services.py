@@ -1058,12 +1058,28 @@ def save_product(data: Dict[str, Any]) -> Dict[str, Any]:
 
     values = shop._ws_products.get_all_values()
     id_col = headers.get("product_id")
-    target_row = None
+    name_col = headers.get("name")
+    stock_col = headers.get("stock_code")
+    price_col = headers.get("price")
+    exact_rows: List[int] = []
+    legacy_rows: List[int] = []
     if id_col:
         for idx, row in enumerate(values[1:], start=2):
-            if id_col - 1 < len(row) and row[id_col - 1].strip() == product_id:
-                target_row = idx
-                break
+            current_id = row[id_col - 1].strip() if id_col - 1 < len(row) else ""
+            if current_id == product_id:
+                exact_rows.append(idx)
+                continue
+            if current_id or not (name_col and stock_col and price_col):
+                continue
+            legacy_name = row[name_col - 1].strip() if name_col - 1 < len(row) else ""
+            legacy_stock = row[stock_col - 1].strip() if stock_col - 1 < len(row) else ""
+            legacy_price = shop.normalize_int(row[price_col - 1] if price_col - 1 < len(row) else "", 0)
+            if shop.generated_product_id(legacy_stock, legacy_name, legacy_price) == product_id:
+                legacy_rows.append(idx)
+
+    # Old Sheet rows had no product_id. Prefer a row that already owns the id;
+    # otherwise claim the matching legacy row and persist the generated id.
+    target_row = exact_rows[0] if exact_rows else (legacy_rows[0] if legacy_rows else None)
 
     if target_row:
         cells = []
@@ -1073,6 +1089,12 @@ def save_product(data: Dict[str, Any]) -> Dict[str, Any]:
                 cells.append(Cell(target_row, col, str(value)))
         if cells:
             shop._ws_products.update_cells(cells, value_input_option="USER_ENTERED")
+
+        # Earlier versions appended a duplicate when editing an id-less legacy row.
+        # A product_id must be unique, so remove any other rows representing it.
+        duplicate_rows = sorted(set(exact_rows + legacy_rows) - {target_row}, reverse=True)
+        for rownum in duplicate_rows:
+            shop._ws_products.delete_rows(rownum)
     else:
         shop._ws_products.append_row(_row_from_headers(headers, payload), value_input_option="USER_ENTERED")
 
